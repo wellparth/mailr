@@ -1,0 +1,21 @@
+# Next.js Standard Git Ignore
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Environment files
+.env
+.env*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor
+.DS_Store
+*.pem
+.vscode/
+.idea/

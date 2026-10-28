@@ -1,0 +1,196 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ProviderType {
+  GMAIL
+  OUTLOOK
+  ICLOUD
+  YAHOO
+  ZOHO
+  FASTMAIL
+  PROTON_BRIDGE
+  IMAP_SMTP
+  OTHER
+}
+
+enum FolderType {
+  INBOX
+  SENT
+  DRAFTS
+  TRASH
+  SPAM
+  ARCHIVE
+  CUSTOM
+}
+
+enum PriorityLevel {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum ProposalStatus {
+  PROPOSED
+  ACCEPTED
+  REJECTED
+  EXPORTED
+}
+
+model User {
+  id                 String             @id @default(uuid())
+  email              String             @unique
+  name               String?
+  passwordHash       String             @map("password_hash")
+  aiProvider         String?            @default("openai") @map("ai_provider")
+  encryptedAiKey     String?            @db.Text @map("encrypted_ai_key")
+  accounts           EmailAccount[]
+  triageLogs         AITriageLog[]
+  calendarProposals  CalendarProposal[]
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model EmailAccount {
+  id                     String       @id @default(uuid())
+  userId                 String       @map("user_id")
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider               ProviderType
+  emailAddress           String       @map("email_address")
+  displayName            String       @map("display_name")
+  colorCode              String       @default("#3b82f6") @map("color_code")
+  encryptedAccessToken   String?      @db.Text @map("encrypted_access_token")
+  encryptedRefreshToken  String?      @db.Text @map("encrypted_refresh_token")
+  encryptedCredentials   String?      @db.Text @map("encrypted_credentials")
+  imapHost               String?      @map("imap_host")
+  imapPort               Int?         @default(993) @map("imap_port")
+  imapSecure             Boolean      @default(true) @map("imap_secure")
+  smtpHost               String?      @map("smtp_host")
+  smtpPort               Int?         @default(587) @map("smtp_port")
+  smtpSecure             Boolean      @default(false) @map("smtp_secure")
+  syncStatus             String       @default("IDLE") @map("sync_status")
+  lastSyncedAt           DateTime?    @map("last_synced_at")
+  folders                Folder[]
+  threads                Thread[]
+  messages               Message[]
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+
+  @@unique([userId, emailAddress])
+  @@map("email_accounts")
+}
+
+model Folder {
+  id             String       @id @default(uuid())
+  accountId      String       @map("account_id")
+  account        EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  remoteFolderId String       @map("remote_folder_id")
+  name           String
+  type           FolderType   @default(CUSTOM)
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@map("folders")
+}
+
+model Thread {
+  id             String        @id @default(uuid())
+  accountId      String        @map("account_id")
+  account        EmailAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  remoteThreadId String        @map("remote_thread_id")
+  subject        String        @db.VarChar(500)
+  snippet        String?       @db.Text
+  priorityScore  Int           @default(50) @map("priority_score")
+  priorityLevel  PriorityLevel @default(NORMAL) @map("priority_level")
+  priorityReason String?       @db.Text @map("priority_reason")
+  isStarred      Boolean       @default(false) @map("is_starred")
+  isArchived     Boolean       @default(false) @map("is_archived")
+  lastMessageAt  DateTime      @map("last_message_at")
+  messages       Message[]
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  @@index([accountId, lastMessageAt])
+  @@index([priorityLevel])
+  @@map("threads")
+}
+
+model Message {
+  id                 String             @id @default(uuid())
+  threadId           String             @map("thread_id")
+  thread             Thread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  accountId          String             @map("account_id")
+  account            EmailAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  remoteMessageId    String             @map("remote_message_id")
+  senderName         String?            @map("sender_name")
+  senderEmail        String             @map("sender_email")
+  recipientList      Json               @map("recipient_list")
+  ccList             Json?              @map("cc_list")
+  bccList            Json?              @map("bcc_list")
+  subject            String             @db.VarChar(500)
+  snippet            String?            @db.Text
+  bodyHtml           String?            @db.LongText @map("body_html")
+  bodyText           String?            @db.LongText @map("body_text")
+  isRead             Boolean            @default(false) @map("is_read")
+  isFlagged          Boolean            @default(false) @map("is_flagged")
+  isArchived         Boolean            @default(false) @map("is_archived")
+  hasAttachments     Boolean            @default(false) @map("has_attachments")
+  receivedAt         DateTime           @map("received_at")
+  attachments        Attachment[]
+  calendarProposals  CalendarProposal[]
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  @@index([accountId, receivedAt])
+  @@index([isRead])
+  @@map("messages")
+}
+
+model Attachment {
+  id          String   @id @default(uuid())
+  messageId   String   @map("message_id")
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String   @map("content_type")
+  sizeBytes   Int      @map("size_bytes")
+  filePath    String   @map("file_path")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("attachments")
+}
+
+model CalendarProposal {
+  id          String         @id @default(uuid())
+  userId      String         @map("user_id")
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId   String         @map("message_id")
+  message     Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  title       String
+  description String?        @db.Text
+  startTime   DateTime       @map("start_time")
+  endTime     DateTime       @map("end_time")
+  timezone    String         @default("UTC")
+  attendees   Json
+  status      ProposalStatus @default(PROPOSED)
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@map("calendar_proposals")
+}
+
+model AITriageLog {
+  id                    String   @id @default(uuid())
+  userId                String   @map("user_id")
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  naturalLanguagePrompt String   @db.Text @map("natural_language_prompt")
+  parsedAction          Json     @map("parsed_action")
+  affectedCount         Int      @default(0) @map("affected_count")
+  executedAt            DateTime @default(now()) @map("executed_at")
+
+  @@map("ai_triage_logs")
+}

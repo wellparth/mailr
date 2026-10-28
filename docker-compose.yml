@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: mailr_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mailr_dev}
+      MYSQL_USER: ${MYSQL_USER:-mailr_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mailr_password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - mailr_internal
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mailr_redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - mailr_internal
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mailr_api
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-mailr_user}:${MYSQL_PASSWORD:-mailr_password}@db:3306/${MYSQL_DATABASE:-mailr_dev}
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: https://${DOMAIN_NAME:-localhost}
+    networks:
+      - mailr_internal
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mailr_web
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_URL: https://${DOMAIN_NAME:-localhost}/api
+    networks:
+      - mailr_internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: mailr_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - mailr_internal
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  mailr_internal:
+    driver: bridge
