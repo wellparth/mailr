@@ -75,3 +75,7 @@ Thumbs.db
 *.temp
 scratch/
 .taste-skill/
+
+# Markdown Files (Only README.md is tracked on Git)
+*.md
+!README.md
