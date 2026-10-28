@@ -5,7 +5,7 @@ import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 import { discoverEmailSettings } from '../utils/autoDiscovery.js';
 import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
 import { ProviderType } from '@prisma/client';
-import { syncBroadcaster } from '../services/syncService.js';
+import { syncBroadcaster, SyncService } from '../services/syncService.js';
 
 const router = Router();
 
@@ -92,36 +92,43 @@ router.post('/test-connection', async (req: AuthenticatedRequest, res: Response)
   }
 });
 
-// 4. Connect Custom Domain or generic IMAP/SMTP account
-router.post('/connect/imap-smtp', async (req: AuthenticatedRequest, res: Response) => {
+// 4. Connect Account (Handles both /api/accounts and /api/accounts/connect/imap-smtp)
+const handleConnectAccount = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const {
-      email,
-      password,
-      displayName,
-      colorCode,
-      provider,
-      imapHost,
-      imapPort,
-      imapSecure,
-      smtpHost,
-      smtpPort,
-      smtpSecure,
-    } = req.body;
+    const email = req.body.emailAddress || req.body.email;
+    const password = req.body.password || req.body.credentials?.password;
+    const displayName = req.body.displayName;
+    const colorCode = req.body.colorCode;
+    const provider = req.body.provider;
+    let imapHost = req.body.imapHost || req.body.credentials?.imapHost;
+    let imapPort = req.body.imapPort || req.body.credentials?.imapPort || 993;
+    let smtpHost = req.body.smtpHost || req.body.credentials?.smtpHost;
+    let smtpPort = req.body.smtpPort || req.body.credentials?.smtpPort || 587;
 
-    if (!email || !password || !imapHost || !smtpHost) {
-      res.status(400).json({ error: 'Email, password, IMAP host, and SMTP host are required.' });
+    if (!email) {
+      res.status(400).json({ error: 'Email address is required.' });
       return;
     }
 
-    // Encrypt password using AES-256-GCM
-    const encryptedCredentials = encryptSecret(JSON.stringify({ password }));
-
-    // Determine ProviderType enum
+    // Determine ProviderType enum and default hosts
     let providerEnum: ProviderType = ProviderType.IMAP_SMTP;
-    if (provider && Object.values(ProviderType).includes(provider as ProviderType)) {
-      providerEnum = provider as ProviderType;
+    if (provider) {
+      const pUpper = String(provider).toUpperCase();
+      if (pUpper === 'GMAIL' || pUpper === 'GOOGLE') {
+        providerEnum = ProviderType.GMAIL;
+        if (!imapHost) imapHost = 'imap.gmail.com';
+        if (!smtpHost) smtpHost = 'smtp.gmail.com';
+      } else if (pUpper === 'OUTLOOK' || pUpper === 'MICROSOFT') {
+        providerEnum = ProviderType.OUTLOOK;
+        if (!imapHost) imapHost = 'outlook.office365.com';
+        if (!smtpHost) smtpHost = 'smtp.office365.com';
+      } else if (Object.values(ProviderType).includes(pUpper as ProviderType)) {
+        providerEnum = pUpper as ProviderType;
+      }
     }
+
+    // Encrypt password using AES-256-GCM
+    const encryptedCredentials = password ? encryptSecret(JSON.stringify({ password })) : null;
 
     const account = await prisma.emailAccount.upsert({
       where: {
@@ -133,14 +140,20 @@ router.post('/connect/imap-smtp', async (req: AuthenticatedRequest, res: Respons
       update: {
         provider: providerEnum,
         displayName: displayName || email.split('@')[0],
-        colorCode: colorCode || '#3b82f6',
+        colorCode:
+          colorCode ||
+          (providerEnum === ProviderType.GMAIL
+            ? '#ea4335'
+            : providerEnum === ProviderType.OUTLOOK
+            ? '#0078d4'
+            : '#10b981'),
         encryptedCredentials,
         imapHost,
-        imapPort: imapPort || 993,
-        imapSecure: imapSecure !== undefined ? imapSecure : true,
+        imapPort: Number(imapPort) || 993,
+        imapSecure: true,
         smtpHost,
-        smtpPort: smtpPort || 587,
-        smtpSecure: smtpSecure !== undefined ? smtpSecure : false,
+        smtpPort: Number(smtpPort) || 587,
+        smtpSecure: false,
         syncStatus: 'CONNECTED',
         lastSyncedAt: new Date(),
       },
@@ -149,14 +162,20 @@ router.post('/connect/imap-smtp', async (req: AuthenticatedRequest, res: Respons
         provider: providerEnum,
         emailAddress: email,
         displayName: displayName || email.split('@')[0],
-        colorCode: colorCode || '#3b82f6',
+        colorCode:
+          colorCode ||
+          (providerEnum === ProviderType.GMAIL
+            ? '#ea4335'
+            : providerEnum === ProviderType.OUTLOOK
+            ? '#0078d4'
+            : '#10b981'),
         encryptedCredentials,
         imapHost,
-        imapPort: imapPort || 993,
-        imapSecure: imapSecure !== undefined ? imapSecure : true,
+        imapPort: Number(imapPort) || 993,
+        imapSecure: true,
         smtpHost,
-        smtpPort: smtpPort || 587,
-        smtpSecure: smtpSecure !== undefined ? smtpSecure : false,
+        smtpPort: Number(smtpPort) || 587,
+        smtpSecure: false,
         syncStatus: 'CONNECTED',
         lastSyncedAt: new Date(),
       },
@@ -168,9 +187,14 @@ router.post('/connect/imap-smtp', async (req: AuthenticatedRequest, res: Respons
       email: account.emailAddress,
     });
 
+    // Trigger initial background sync
+    SyncService.syncAccount(account.id).catch((syncErr) => {
+      console.warn(`[Sync] Background sync notice for ${account.emailAddress}:`, syncErr.message);
+    });
+
     res.status(201).json({
       success: true,
-      message: `Account ${email} connected successfully.`,
+      message: `Account ${email} connected successfully. Sync initiated.`,
       account: {
         id: account.id,
         emailAddress: account.emailAddress,
@@ -183,7 +207,10 @@ router.post('/connect/imap-smtp', async (req: AuthenticatedRequest, res: Respons
     const msg = err instanceof Error ? err.message : 'Failed to connect account';
     res.status(500).json({ error: msg });
   }
-});
+};
+
+router.post('/', handleConnectAccount);
+router.post('/connect/imap-smtp', handleConnectAccount);
 
 // 5. Connect 1-Click OAuth Account (Google or Microsoft)
 router.post('/connect/oauth/:provider', async (req: AuthenticatedRequest, res: Response) => {
@@ -282,7 +309,7 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 7. Trigger Manual Delta Sync
+// 7. Trigger Manual Sync for specific account
 router.post('/:id/sync', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -296,32 +323,25 @@ router.post('/:id/sync', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    await prisma.emailAccount.update({
-      where: { id },
-      data: {
-        syncStatus: 'SYNCING',
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    syncBroadcaster.notifyUser(req.user!.id, 'sync_started', { accountId: id });
-
-    // Mark completed after processing
-    setTimeout(async () => {
-      try {
-        await prisma.emailAccount.update({
-          where: { id },
-          data: { syncStatus: 'IDLE' },
-        });
-        syncBroadcaster.notifyUser(req.user!.id, 'sync_completed', { accountId: id });
-      } catch {
-        // ignore
-      }
-    }, 1500);
-
-    res.json({ success: true, message: `Sync initiated for ${account.emailAddress}` });
+    const result = await SyncService.syncAccount(account.id);
+    res.json(result);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Sync failed';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 8. Trigger Sync for ALL connected accounts
+router.post('/sync', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await SyncService.syncAllUserAccounts(req.user!.id);
+    res.json({
+      success: true,
+      message: `Sync complete. Ingested ${result.totalIngested} new message(s).`,
+      ...result,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Sync all accounts failed';
     res.status(500).json({ error: msg });
   }
 });
