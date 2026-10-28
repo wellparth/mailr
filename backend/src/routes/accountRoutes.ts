@@ -346,4 +346,32 @@ router.post('/sync', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// 9. Server-Sent Events (SSE) Stream for real-time mailbox sync notifications
+router.get('/events', (req: AuthenticatedRequest, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  // Initial welcome/connection event
+  res.write(`data: ${JSON.stringify({ type: 'CONNECTED', message: 'Mailr SSE Live Stream Connected' })}\n\n`);
+
+  // Periodic heartbeat / ping every 25s
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 25000);
+
+  res.on('close', () => {
+    clearInterval(heartbeat);
+  });
+
+  syncBroadcaster.addClient(req.user!.id, res);
+});
+
 export default router;

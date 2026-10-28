@@ -43,11 +43,35 @@ export default function AppMailPage() {
 
   // AI Triage state
   const [triageRunning, setTriageRunning] = React.useState(false);
+  const [isSyncing, setIsSyncing] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleSyncNow = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    showToast("Syncing mailboxes...");
+    try {
+      const endpoint =
+        selectedAccountId && selectedAccountId !== "all"
+          ? `/api/accounts/${selectedAccountId}/sync`
+          : "/api/accounts/sync";
+      const res = await apiFetch(endpoint, { method: "POST" });
+      if (res && res.success !== false) {
+        showToast(res.message || "Mailbox synced successfully.");
+        await fetchData();
+      } else {
+        showToast(res?.error || "Sync completed.");
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Sync failed.");
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   // Check URL for OAuth callback token
@@ -309,6 +333,8 @@ export default function AppMailPage() {
         onLogout={handleLogout}
         onTriagePromptSubmit={handleTriagePromptSubmit}
         triageRunning={triageRunning}
+        onSyncNow={handleSyncNow}
+        syncing={isSyncing}
       />
 
       {/* Third Pane: Reading / Action Detail View */}

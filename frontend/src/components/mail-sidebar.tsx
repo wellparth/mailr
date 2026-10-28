@@ -22,6 +22,7 @@ import {
   Paperclip,
   Clock,
   Filter,
+  RefreshCw,
 } from "lucide-react";
 
 import {
@@ -110,6 +111,8 @@ interface MailSidebarProps {
   onLogout: () => void;
   onTriagePromptSubmit: (prompt: string) => void;
   triageRunning: boolean;
+  onSyncNow?: () => void;
+  syncing?: boolean;
 }
 
 export function MailSidebar({
@@ -132,6 +135,8 @@ export function MailSidebar({
   onLogout,
   onTriagePromptSubmit,
   triageRunning,
+  onSyncNow,
+  syncing = false,
 }: MailSidebarProps) {
   const [nlInput, setNlInput] = React.useState("");
 
@@ -494,8 +499,20 @@ export function MailSidebar({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Unreads Switch */}
+            {/* Actions: Sync Button & Unreads Switch */}
             <div className="flex items-center gap-1.5">
+              {onSyncNow && (
+                <button
+                  type="button"
+                  onClick={onSyncNow}
+                  disabled={syncing}
+                  title="Sync inbox now"
+                  className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`h-3 w-3 ${syncing ? "animate-spin text-sky-400" : ""}`} />
+                </button>
+              )}
+              <div className="h-3 w-px bg-border/60 mx-0.5" />
               <Label htmlFor="unreads-filter" className="text-xs text-muted-foreground cursor-pointer">
                 Unreads
               </Label>

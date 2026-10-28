@@ -30,7 +30,7 @@ class SyncBroadcaster extends EventEmitter {
     const userClients = this.clients.get(userId);
     if (!userClients || userClients.length === 0) return;
 
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const payload = `data: ${JSON.stringify({ type: event, ...data })}\n\n`;
     userClients.forEach((res) => {
       try {
         res.write(payload);
