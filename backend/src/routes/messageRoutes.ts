@@ -42,8 +42,8 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response) => {
 // Require Auth for all remaining message endpoints
 router.use(authMiddleware);
 
-// 2. Unified Inbox Stream
-router.get('/unified', async (req: AuthenticatedRequest, res: Response) => {
+// 2. Unified Inbox Stream (Supports both /api/messages and /api/messages/unified)
+router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) => {
   try {
     const {
       accountId,
@@ -165,8 +165,8 @@ router.get('/unified', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 3. Get Full Conversation Thread
-router.get('/threads/:id', async (req: AuthenticatedRequest, res: Response) => {
+// 3. Get Full Conversation Thread (Supports both /threads/:id and /thread/:id)
+router.get(['/threads/:id', '/thread/:id'], async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
 

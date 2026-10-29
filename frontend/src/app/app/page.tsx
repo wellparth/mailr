@@ -97,20 +97,15 @@ export default function AppMailPage() {
     }
   };
 
-  // Check URL for OAuth callback token
-  React.useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const urlToken = params.get("token");
-      if (urlToken) {
-        localStorage.setItem("mailr_token", urlToken);
-        const email = params.get("email");
-        const provider = params.get("provider");
-        if (email) {
-          showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
-        }
-        window.history.replaceState({}, document.title, window.location.pathname);
+  // Fetch thread detail
+  const fetchThreadDetail = React.useCallback(async (threadId: string) => {
+    try {
+      const res = await apiFetch(`/api/messages/thread/${threadId}`);
+      if (res.thread) {
+        setSelectedThread(res.thread);
       }
+    } catch (err) {
+      console.error("Failed to fetch thread detail", err);
     }
   }, []);
 
@@ -155,19 +150,25 @@ export default function AppMailPage() {
     } catch (err) {
       console.error("Failed to load initial data", err);
     }
-  }, [router, selectedThreadId]);
+  }, [router, selectedThreadId, fetchThreadDetail]);
 
-  // Fetch thread detail
-  const fetchThreadDetail = async (threadId: string) => {
-    try {
-      const res = await apiFetch(`/api/messages/thread/${threadId}`);
-      if (res.thread) {
-        setSelectedThread(res.thread);
+  // Check URL for OAuth callback token
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get("token");
+      if (urlToken) {
+        localStorage.setItem("mailr_token", urlToken);
+        const email = params.get("email");
+        const provider = params.get("provider");
+        if (email) {
+          showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+        fetchData();
       }
-    } catch (err) {
-      console.error("Failed to fetch thread detail", err);
     }
-  };
+  }, [fetchData]);
 
   // SSE Real-time Live Stream
   React.useEffect(() => {
@@ -178,7 +179,7 @@ export default function AppMailPage() {
 
     let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource(`http://localhost:5000/api/accounts/events?token=${token}`);
+      eventSource = new EventSource(`http://localhost:5000/api/messages/stream?token=${token}`);
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
