@@ -46,11 +46,27 @@ export function ConnectAccountDialog({
   const [testingConnection, setTestingConnection] = React.useState(false);
   const [testResult, setTestResult] = React.useState<{ success: boolean; message: string } | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [useManualPassword, setUseManualPassword] = React.useState(false);
+
+  // Direct Google OAuth authorization trigger
+  const handleGoogleOAuthDirect = async () => {
+    try {
+      const res = await apiFetch<{ configured: boolean; url: string | null; message?: string }>('/auth/google/url');
+      if (res && res.configured && res.url) {
+        window.location.href = res.url;
+      } else {
+        alert(res?.message || 'Google OAuth is not configured in backend .env.');
+      }
+    } catch (err: any) {
+      alert('OAuth initialization error: ' + err.message);
+    }
+  };
 
   // Auto-populate server settings based on provider
   const handleProviderSelect = (p: "GMAIL" | "OUTLOOK" | "IMAP_SMTP") => {
     setProvider(p);
     setTestResult(null);
+    setUseManualPassword(false);
     if (p === "GMAIL") {
       setColorCode("#ea4335");
       setImapHost("imap.gmail.com");
@@ -218,7 +234,59 @@ export function ConnectAccountDialog({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+        {provider === "GMAIL" && !useManualPassword ? (
+          <div className="space-y-4 py-2">
+            <div className="p-4 rounded-xl bg-red-500/5 border border-red-500/20 text-center space-y-3">
+              <div className="flex justify-center">
+                <div className="p-2.5 rounded-2xl bg-card border border-border shadow-sm">
+                  <svg className="h-6 w-6" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.14C3.25 21.34 7.34 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.59H1.26C.46 8.18 0 9.97 0 12s.46 3.82 1.26 5.41l4.02-3.14z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.25 2.66 1.26 6.59l4.02 3.14c.95-2.83 3.6-4.98 6.72-4.98z"
+                    />
+                  </svg>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-xs font-semibold text-foreground">Direct 1-Click Google OAuth</h4>
+                <p className="text-[11px] text-muted-foreground leading-relaxed max-w-xs mx-auto">
+                  No app passwords or manual IMAP ports required. Mailr connects directly via official Google OAuth 2.0 with AES-256-GCM encrypted tokens and syncs your inbox automatically.
+                </p>
+              </div>
+              <Button
+                type="button"
+                onClick={handleGoogleOAuthDirect}
+                className="w-full text-xs h-9 bg-red-600 hover:bg-red-500 text-white font-medium cursor-pointer shadow-sm gap-2"
+              >
+                <span className="font-bold">G</span>
+                <span>Connect via Google OAuth 2.0</span>
+              </Button>
+            </div>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setUseManualPassword(true)}
+                className="text-[11px] text-muted-foreground hover:text-foreground underline cursor-pointer"
+              >
+                Or connect manually with App Password & IMAP
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3.5">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Email Address</Label>
             <Input
@@ -374,6 +442,7 @@ export function ConnectAccountDialog({
             </div>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '../db.js';
 import { generateToken, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
+import { SyncService } from '../services/syncService.js';
 import { ProviderType } from '@prisma/client';
 
 const router = Router();
@@ -128,7 +129,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       ? encryptSecret(tokenData.refresh_token)
       : encryptSecret('google_oauth_offline_' + Date.now());
 
-    await prisma.emailAccount.upsert({
+    const account = await prisma.emailAccount.upsert({
       where: {
         userId_emailAddress: {
           userId: user.id,
@@ -155,6 +156,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
         syncStatus: 'CONNECTED',
         lastSyncedAt: new Date(),
       },
+    });
+
+    // Auto-trigger initial inbox synchronization immediately in the background
+    SyncService.syncAccount(account.id).catch((syncErr) => {
+      console.warn('[Google OAuth] Initial background inbox sync failed:', syncErr);
     });
 
     const jwtToken = generateToken({ id: user.id, email: user.email });

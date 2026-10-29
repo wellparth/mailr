@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { EventEmitter } from 'events';
 import prisma from '../db.js';
-import { decryptSecret } from '../utils/crypto.js';
+import { decryptSecret, encryptSecret } from '../utils/crypto.js';
 import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
 import { GmailAdapter } from '../adapters/GmailAdapter.js';
 import { OutlookAdapter } from '../adapters/OutlookAdapter.js';
@@ -75,6 +75,12 @@ export class SyncService {
           accessToken,
           refreshToken,
           userEmail: account.emailAddress,
+          onTokenRefreshed: async (newToken: string) => {
+            await prisma.emailAccount.update({
+              where: { id: account.id },
+              data: { encryptedAccessToken: encryptSecret(newToken) },
+            });
+          },
         });
       } else if (account.provider === ProviderType.OUTLOOK && account.encryptedAccessToken) {
         const accessToken = decryptSecret(account.encryptedAccessToken);
