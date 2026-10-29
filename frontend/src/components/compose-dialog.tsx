@@ -18,6 +18,7 @@ import {
   Paperclip,
   Trash2,
   FileText,
+  Link as LinkIcon,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -43,6 +44,9 @@ interface ComposeDialogProps {
   onOpenChange: (open: boolean) => void;
   accounts: ConnectedAccount[];
   onSent: () => void;
+  initialDraftText?: string;
+  initialSubject?: string;
+  initialTo?: string;
 }
 
 export function ComposeDialog({
@@ -50,20 +54,75 @@ export function ComposeDialog({
   onOpenChange,
   accounts,
   onSent,
+  initialDraftText = "",
+  initialSubject = "",
+  initialTo = "",
 }: ComposeDialogProps) {
   const [selectedAccountId, setSelectedAccountId] = React.useState<string>("");
-  const [to, setTo] = React.useState("");
-  const [subject, setSubject] = React.useState("");
-  const [bodyText, setBodyText] = React.useState("");
+  const [to, setTo] = React.useState(initialTo);
+  const [subject, setSubject] = React.useState(initialSubject);
+  const [bodyText, setBodyText] = React.useState(initialDraftText);
   const [attachments, setAttachments] = React.useState<AttachedFile[]>([]);
   const [sending, setSending] = React.useState(false);
+  const [bookingUrl, setBookingUrl] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (open) {
+      if (initialTo) setTo(initialTo);
+      if (initialSubject) setSubject(initialSubject);
+      if (initialDraftText) setBodyText(initialDraftText);
+
+      // Load user booking integrations (Cal.com or Calendly)
+      apiFetch("/api/agent/calendar/integrations")
+        .then((res) => {
+          if (res && res.integrations && res.integrations.length > 0) {
+            const active = res.integrations.find((i: any) => i.bookingUrl);
+            if (active) setBookingUrl(active.bookingUrl);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [open, initialDraftText, initialSubject, initialTo]);
 
   React.useEffect(() => {
     if (accounts.length > 0 && !selectedAccountId) {
       setSelectedAccountId(accounts[0].id);
     }
   }, [accounts, selectedAccountId]);
+
+  // Handle clipboard paste of images directly into the compose body
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const pastedFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) pastedFiles.push(file);
+      }
+    }
+
+    if (pastedFiles.length > 0) {
+      const newAttachments: AttachedFile[] = pastedFiles.map((f) => ({
+        id: Math.random().toString(36).substring(2, 9),
+        file: f,
+        name: f.name || `pasted_screenshot_${Date.now()}.png`,
+        size: f.size,
+        type: f.type || "image/png",
+        previewUrl: URL.createObjectURL(f),
+      }));
+
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  };
+
+  const handleInsertBookingLink = () => {
+    if (!bookingUrl) return;
+    const textToAppend = `\n\nFeel free to find a time on my calendar here:\n👉 ${bookingUrl}`;
+    setBodyText((prev) => prev + textToAppend);
+  };
 
   // Handle multi-image & file attachments
   const handleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -215,7 +274,8 @@ export function ComposeDialog({
               required
               value={bodyText}
               onChange={(e) => setBodyText(e.target.value)}
-              placeholder="Write your email message..."
+              onPaste={handlePaste}
+              placeholder="Write your email message (you can paste screenshots with Ctrl+V directly)..."
               className="w-full bg-secondary/20 border border-border/60 rounded-xl p-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-ring resize-none font-sans leading-relaxed"
             />
           </div>
@@ -295,7 +355,7 @@ export function ComposeDialog({
 
           {/* Actions & Attachment Trigger */}
           <div className="flex items-center justify-between pt-3 border-t border-border/50">
-            {/* Attachment Button */}
+            {/* Attachment & Booking Link Buttons */}
             <div className="flex items-center gap-2">
               <Button
                 type="button"
@@ -307,8 +367,23 @@ export function ComposeDialog({
                 <ImageIcon className="h-3.5 w-3.5 text-sky-400" />
                 <span>Attach Images / Files</span>
               </Button>
-              <span className="text-[11px] text-muted-foreground hidden sm:inline">
-                (PNG, JPG, WebP, GIF, PDF)
+
+              {bookingUrl && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleInsertBookingLink}
+                  title={`Insert ${bookingUrl}`}
+                  className="text-xs h-8 gap-1.5 bg-secondary/40 border-border hover:bg-secondary text-amber-400 hover:text-amber-300 cursor-pointer"
+                >
+                  <LinkIcon className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Add Booking Link</span>
+                </Button>
+              )}
+
+              <span className="text-[11px] text-muted-foreground hidden md:inline">
+                (PNG, JPG, WebP, PDF, or Ctrl+V)
               </span>
             </div>
 

@@ -5,6 +5,7 @@ import authRoutes from './routes/authRoutes.js';
 import accountRoutes from './routes/accountRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
+import agentRoutes from './routes/agentRoutes.js';
 
 import { SyncService } from './services/syncService.js';
 import prisma from './db.js';
@@ -42,6 +43,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/agent', agentRoutes);
 
 // Global Error Handler
 app.use((err: Error, _req: Request, res: Response, _next: express.NextFunction) => {

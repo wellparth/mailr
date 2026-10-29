@@ -53,6 +53,9 @@ model User {
   accounts           EmailAccount[]
   triageLogs         AITriageLog[]
   calendarProposals  CalendarProposal[]
+  threadNotes        ThreadNote[]
+  calendarIntegrations CalendarIntegration[]
+  agentChatMessages  AgentChatMessage[]
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
@@ -114,6 +117,8 @@ model Thread {
   isArchived     Boolean       @default(false) @map("is_archived")
   lastMessageAt  DateTime      @map("last_message_at")
   messages       Message[]
+  notes          ThreadNote[]
+  agentMessages  AgentChatMessage[]
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
@@ -193,4 +198,51 @@ model AITriageLog {
   executedAt            DateTime @default(now()) @map("executed_at")
 
   @@map("ai_triage_logs")
+}
+
+model ThreadNote {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId     String   @map("thread_id")
+  thread       Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  title        String   @default("Thread Summary & Notes")
+  summary      String   @db.Text
+  actionItems  Json     @map("action_items")
+  keyDecisions Json?    @map("key_decisions")
+  rawMarkdown  String   @db.LongText @map("raw_markdown")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, threadId])
+  @@map("thread_notes")
+}
+
+model CalendarIntegration {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String   // "GOOGLE", "OUTLOOK", "CAL_COM", "CALENDLY"
+  bookingUrl String?  @map("booking_url")
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, provider])
+  @@map("calendar_integrations")
+}
+
+model AgentChatMessage {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId      String?  @map("thread_id")
+  thread        Thread?  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role          String   // "user" | "assistant" | "system"
+  content       String   @db.Text
+  actionPayload Json?    @map("action_payload")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([userId, threadId])
+  @@map("agent_chat_messages")
 }

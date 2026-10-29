@@ -8,15 +8,10 @@ import { MailDisplay } from "@/components/mail-display";
 import { ComposeDialog } from "@/components/compose-dialog";
 import { ConnectAccountDialog } from "@/components/connect-account-dialog";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+import { SettingsDialog } from "@/components/settings-dialog";
+import { AICopilotDrawer } from "@/components/ai-copilot-drawer";
 import { Button } from "@/components/ui/button";
-import { Shield, Lock, Server, Sparkles, CheckCircle2 } from "lucide-react";
+import { Sparkles, CheckCircle2 } from "lucide-react";
 import { apiFetch, getAuthToken, removeAuthToken } from "@/lib/api";
 
 export default function AppMailPage() {
@@ -40,6 +35,34 @@ export default function AppMailPage() {
   const [isConnectModalOpen, setIsConnectModalOpen] = React.useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [isCopilotOpen, setIsCopilotOpen] = React.useState(false);
+  const [composerPrefill, setComposerPrefill] = React.useState<{
+    draftText: string;
+    subject: string;
+    to: string;
+  } | null>(null);
+
+  // Global shortcut: Ctrl+J / Cmd+J toggles AI Copilot
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setIsCopilotOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleInsertDraftToComposer = (draftText: string, subject?: string, recipientEmail?: string) => {
+    setComposerPrefill({
+      draftText,
+      subject: subject || "",
+      to: recipientEmail || "",
+    });
+    setIsCopilotOpen(false);
+    setIsComposeOpen(true);
+  };
 
   // AI Triage state
   const [triageRunning, setTriageRunning] = React.useState(false);
@@ -348,16 +371,24 @@ export default function AppMailPage() {
           onReplySuccess={fetchData}
           onOpenConnectModal={() => setIsConnectModalOpen(true)}
           onOpenCompose={() => setIsComposeOpen(true)}
+          onOpenCopilot={() => setIsCopilotOpen(true)}
         />
       </SidebarInset>
 
       {/* Compose Dialog */}
       <ComposeDialog
         open={isComposeOpen}
-        onOpenChange={setIsComposeOpen}
+        onOpenChange={(open) => {
+          setIsComposeOpen(open);
+          if (!open) setComposerPrefill(null);
+        }}
         accounts={accounts}
+        initialDraftText={composerPrefill?.draftText}
+        initialSubject={composerPrefill?.subject}
+        initialTo={composerPrefill?.to}
         onSent={() => {
           showToast("Email dispatched successfully.");
+          setComposerPrefill(null);
           fetchData();
         }}
       />
@@ -383,64 +414,20 @@ export default function AppMailPage() {
       />
 
       {/* Settings & Security Modal */}
-      <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="max-w-md bg-card border-border text-foreground shadow-2xl rounded-2xl p-6">
-          <DialogHeader className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-secondary text-foreground">
-                <Shield className="h-5 w-5 text-emerald-400" />
-              </div>
-              <div>
-                <DialogTitle className="text-base font-semibold">
-                  Mailr Security & Privacy
-                </DialogTitle>
-                <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-                  Client-side encrypted architecture overview.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
+      <SettingsDialog
+        open={isSettingsOpen}
+        onOpenChange={setIsSettingsOpen}
+        accountsCount={accounts.length}
+      />
 
-          <div className="space-y-4 py-2 text-xs text-muted-foreground">
-            <div className="bg-secondary/40 rounded-xl p-3 border border-border/50 space-y-2">
-              <div className="flex items-center gap-2 text-foreground font-medium">
-                <Lock className="h-4 w-4 text-emerald-400" />
-                <span>AES-256-GCM Zero-Knowledge Storage</span>
-              </div>
-              <p className="leading-relaxed">
-                OAuth refresh tokens, IMAP passwords, and SMTP secrets are never stored in plain text.
-                Every credential undergoes an authenticated AES-256-GCM cipher with a unique initialization vector.
-              </p>
-            </div>
-
-            <div className="bg-secondary/40 rounded-xl p-3 border border-border/50 space-y-2">
-              <div className="flex items-center gap-2 text-foreground font-medium">
-                <Server className="h-4 w-4 text-sky-400" />
-                <span>Docker VPS Deployment Ready</span>
-              </div>
-              <p className="leading-relaxed">
-                Mailr is containerized with Docker, docker-compose, and Nginx reverse proxy.
-                Self-host on any Linux VPS or run locally with MySQL XAMPP.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between text-xs pt-2">
-              <span className="text-muted-foreground">Connected Inboxes:</span>
-              <span className="font-semibold text-foreground">{accounts.length} active</span>
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-2 border-t border-border/50">
-            <Button
-              size="sm"
-              onClick={() => setIsSettingsOpen(false)}
-              className="text-xs h-8 bg-secondary hover:bg-secondary/80 text-foreground"
-            >
-              Done
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Autonomous AI Copilot Drawer */}
+      <AICopilotDrawer
+        open={isCopilotOpen}
+        onClose={() => setIsCopilotOpen(false)}
+        activeThread={selectedThread}
+        onInsertDraftToComposer={handleInsertDraftToComposer}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
     </SidebarProvider>
   );
 }
