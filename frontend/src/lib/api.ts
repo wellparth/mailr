@@ -33,7 +33,13 @@ export async function apiFetch<T = any>(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+  // Normalize endpoint so callers passing either "/api/path" or "/path" work seamlessly
+  const baseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const finalPath = cleanEndpoint.startsWith('/api/') ? cleanEndpoint.substring(4) : cleanEndpoint;
+  const fullUrl = `${baseUrl}${finalPath}`;
+
+  const res = await fetch(fullUrl, {
     ...options,
     headers,
   });

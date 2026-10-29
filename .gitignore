@@ -75,6 +75,10 @@ Thumbs.db
 *.temp
 scratch/
 .taste-skill/
+check-ui.js
+frontend/check-ui.js
+ui-check.png
+frontend/ui-check.png
 
 # Markdown Files (Only README.md is tracked on Git)
 *.md

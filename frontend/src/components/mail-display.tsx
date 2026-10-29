@@ -121,6 +121,31 @@ export function MailDisplay({
   const [loadingNote, setLoadingNote] = React.useState(false);
   const [noteCopied, setNoteCopied] = React.useState(false);
 
+  // Load notes whenever active thread changes or notes tab is opened
+  const loadNotes = React.useCallback(async (threadId: string) => {
+    try {
+      setLoadingNote(true);
+      const res = await apiFetch(`/api/agent/notes/${threadId}`);
+      if (res && res.note) {
+        setThreadNote(res.note);
+      } else {
+        setThreadNote(null);
+      }
+    } catch {
+      setThreadNote(null);
+    } finally {
+      setLoadingNote(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (thread?.id) {
+      loadNotes(thread.id);
+    } else {
+      setThreadNote(null);
+    }
+  }, [thread?.id, loadNotes]);
+
   // If NO thread is selected, display high-design Welcome & Multi-Account Guide
   if (!thread) {
     return (
@@ -270,31 +295,6 @@ export function MailDisplay({
   const latestMessage = thread.messages[0];
   const proposals = latestMessage?.calendarProposals || [];
   const attachments = latestMessage?.attachments || [];
-
-  // Load notes whenever active thread changes or notes tab is opened
-  const loadNotes = React.useCallback(async (threadId: string) => {
-    try {
-      setLoadingNote(true);
-      const res = await apiFetch(`/api/agent/notes/${threadId}`);
-      if (res && res.note) {
-        setThreadNote(res.note);
-      } else {
-        setThreadNote(null);
-      }
-    } catch {
-      setThreadNote(null);
-    } finally {
-      setLoadingNote(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    if (thread?.id) {
-      loadNotes(thread.id);
-    } else {
-      setThreadNote(null);
-    }
-  }, [thread?.id, loadNotes]);
 
   // Generate Notes on demand
   const handleGenerateNotes = async () => {
