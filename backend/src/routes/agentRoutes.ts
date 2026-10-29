@@ -190,13 +190,14 @@ router.get('/byok', async (req: AuthenticatedRequest, res: Response) => {
     });
 
     res.json({
-      provider: user?.aiProvider || 'openai',
+      provider: user?.aiProvider || (process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai'),
       hasCustomKey: Boolean(user?.encryptedAiKey && user.encryptedAiKey.length > 0),
+      serverHasKey: Boolean(process.env.NVIDIA_API_KEY),
       supportedProviders: [
+        { id: 'nvidia', name: 'NVIDIA NIM (Nemotron 3.5 Bolt - Free)', placeholder: 'nvapi-...' },
         { id: 'openai', name: 'OpenAI (GPT-4o, GPT-4o-mini)', placeholder: 'sk-proj-...' },
         { id: 'claude', name: 'Anthropic Claude (3.5 Sonnet, 3.5 Haiku)', placeholder: 'sk-ant-api03-...' },
         { id: 'google', name: 'Google Gemini (1.5 Flash, 1.5 Pro)', placeholder: 'AIzaSy...' },
-        { id: 'nvidia', name: 'NVIDIA NIM (Llama 3.1 70B)', placeholder: 'nvapi-...' },
       ],
     });
   } catch (err: unknown) {

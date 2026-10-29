@@ -18,7 +18,7 @@ async function seed() {
       email: demoEmail,
       name: 'Alex Gorde',
       passwordHash,
-      aiProvider: 'openai',
+      aiProvider: 'nvidia',
       encryptedAiKey,
     },
   });

@@ -43,7 +43,7 @@ export function SettingsDialog({
   const [activeTab, setActiveTab] = React.useState<"ai" | "calendar" | "security">("ai");
 
   // AI & BYOK State
-  const [aiProvider, setAiProvider] = React.useState<"openai" | "claude" | "google" | "nvidia">("google");
+  const [aiProvider, setAiProvider] = React.useState<"openai" | "claude" | "google" | "nvidia">("nvidia");
   const [apiKey, setApiKey] = React.useState("");
   const [showKey, setShowKey] = React.useState(false);
   const [hasCustomKey, setHasCustomKey] = React.useState(false);
@@ -171,11 +171,11 @@ export function SettingsDialog({
 
   const providers = [
     {
-      id: "google",
-      name: "Google Gemini",
-      desc: "Fast & multimodal (Gemini 1.5 Flash / Pro)",
-      placeholder: "AIzaSy...",
-      badge: "Fast & Free Tier",
+      id: "nvidia",
+      name: "NVIDIA NIM",
+      desc: "Nemotron 3.5 Bolt (Free Cloud LLM)",
+      placeholder: "nvapi-...",
+      badge: "Default & Free",
     },
     {
       id: "openai",
@@ -192,11 +192,11 @@ export function SettingsDialog({
       badge: "Elite Writing",
     },
     {
-      id: "nvidia",
-      name: "NVIDIA NIM",
-      desc: "Llama 3.1 & Mixtral on NVIDIA GPU Cloud",
-      placeholder: "nvapi-...",
-      badge: "Open Models",
+      id: "google",
+      name: "Google Gemini",
+      desc: "Fast & multimodal (Gemini 1.5 Flash / Pro)",
+      placeholder: "AIzaSy...",
+      badge: "Multimodal",
     },
   ];
 

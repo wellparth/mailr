@@ -41,7 +41,7 @@ export interface MeetingScheduleResult {
 
 export class AgentService {
   /**
-   * Resolve user BYOK credentials (OpenAI, Claude, Google Gemini, or Nvidia NIM)
+   * Resolve user BYOK credentials (Nvidia NIM, OpenAI, Claude, or Google Gemini)
    */
   static async getUserAIConfig(userId: string): Promise<{ provider: AIProvider; apiKey?: string }> {
     const user = await prisma.user.findUnique({
@@ -49,11 +49,12 @@ export class AgentService {
       select: { aiProvider: true, encryptedAiKey: true },
     });
 
-    const rawProvider = (user?.aiProvider || 'openai').toLowerCase();
+    const defaultProvider: AIProvider = process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai';
+    const rawProvider = (user?.aiProvider || defaultProvider).toLowerCase();
     const provider: AIProvider =
-      rawProvider === 'claude' || rawProvider === 'google' || rawProvider === 'nvidia'
-        ? rawProvider
-        : 'openai';
+      rawProvider === 'claude' || rawProvider === 'google' || rawProvider === 'nvidia' || rawProvider === 'openai'
+        ? (rawProvider as AIProvider)
+        : defaultProvider;
 
     const apiKey = user?.encryptedAiKey ? decryptSecret(user.encryptedAiKey) : undefined;
     return { provider, apiKey };

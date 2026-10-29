@@ -33,7 +33,7 @@ export class LLMClient {
       case 'google':
         return 'gemini-1.5-flash';
       case 'nvidia':
-        return 'meta/llama-3.1-70b-instruct';
+        return process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-bolt-e4b';
       default:
         return 'gpt-4o-mini';
     }
@@ -232,7 +232,7 @@ export class LLMClient {
   }
 
   /**
-   * 4. NVIDIA NIM API (OpenAI-compatible)
+   * 4. NVIDIA NIM API (Free-tier OpenAI-compatible endpoint with Nemotron 3.5 Bolt)
    */
   private static async callNvidia(
     apiKey: string,
@@ -242,21 +242,29 @@ export class LLMClient {
     temperature: number,
     maxTokens: number
   ): Promise<LLMResponse> {
+    const payload = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature,
+      top_p: 0.95,
+      max_tokens: maxTokens,
+      seed: 42,
+      stream: false,
+      parallel_tool_calls: true,
+      chat_template_kwargs: { enable_thinking: true },
+    };
+
     const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature,
-        max_tokens: maxTokens,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -265,7 +273,12 @@ export class LLMClient {
     }
 
     const data = (await res.json()) as any;
-    const text = data.choices?.[0]?.message?.content || '';
+    let text = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
+
+    // Strip out internal reasoning tags if present so draft responses & notes remain clean
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+
     return {
       text,
       provider: 'nvidia',
