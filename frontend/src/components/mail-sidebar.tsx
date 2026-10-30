@@ -41,6 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -113,6 +114,11 @@ interface MailSidebarProps {
   triageRunning: boolean;
   onSyncNow?: () => void;
   syncing?: boolean;
+  totalThreads?: number;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
+  onDeepSyncNow?: () => void;
 }
 
 export function MailSidebar({
@@ -137,6 +143,11 @@ export function MailSidebar({
   triageRunning,
   onSyncNow,
   syncing = false,
+  totalThreads,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
+  onDeepSyncNow,
 }: MailSidebarProps) {
   const [nlInput, setNlInput] = React.useState("");
 
@@ -571,6 +582,29 @@ export function MailSidebar({
           </div>
         </SidebarHeader>
 
+        {/* Email count and deep sync status header */}
+        <div className="px-3 py-1.5 bg-muted/20 border-b border-border/40 flex items-center justify-between text-[11px] text-muted-foreground shrink-0">
+          <span>
+            {threads.length > 0 ? (
+              <>Showing <strong className="text-foreground">{threads.length}</strong> of {totalThreads || threads.length} emails</>
+            ) : (
+              "0 emails"
+            )}
+          </span>
+          {onDeepSyncNow && accounts.length > 0 && (
+            <button
+              type="button"
+              onClick={onDeepSyncNow}
+              disabled={syncing}
+              className="text-[10px] text-sky-400 hover:text-sky-300 font-medium hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Sync all past emails from your connected accounts"
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${syncing ? "animate-spin" : ""}`} />
+              <span>Full Sync</span>
+            </button>
+          )}
+        </div>
+
         {/* Email Thread List */}
         <SidebarContent className="p-0 overflow-y-auto">
           <SidebarGroup className="p-0">
@@ -694,6 +728,23 @@ export function MailSidebar({
                       </button>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Load More Button */}
+              {hasMore && (
+                <div className="p-3 border-t border-border/40">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onLoadMore}
+                    disabled={isLoadingMore}
+                    className="w-full text-xs h-8 border-dashed border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/60 cursor-pointer"
+                  >
+                    {isLoadingMore
+                      ? "Loading more emails..."
+                      : `Load More Emails (${threads.length} of ${totalThreads || threads.length})`}
+                  </Button>
                 </div>
               )}
             </SidebarGroupContent>

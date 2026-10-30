@@ -47,12 +47,20 @@ export interface TestConnectionResult {
   details?: Record<string, unknown>;
 }
 
+export interface SyncOptions {
+  maxMessages?: number;
+  fullSync?: boolean;
+  folder?: string;
+  existingRemoteIds?: Set<string>;
+}
+
 export interface IEmailAdapter {
   connect(): Promise<void>;
   testConnection(): Promise<TestConnectionResult>;
   syncMessages(
     since: Date,
-    onBatch: (messages: NormalizedMessage[]) => Promise<void>
+    onBatch: (messages: NormalizedMessage[]) => Promise<void>,
+    options?: SyncOptions
   ): Promise<number>;
   sendMail(options: SendMailOptions): Promise<{ success: boolean; messageId: string }>;
   markAsRead(remoteMessageId: string, isRead: boolean): Promise<void>;

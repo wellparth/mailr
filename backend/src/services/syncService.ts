@@ -6,7 +6,7 @@ import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
 import { GmailAdapter } from '../adapters/GmailAdapter.js';
 import { OutlookAdapter } from '../adapters/OutlookAdapter.js';
 import { AIService } from './aiService.js';
-import { NormalizedMessage, IEmailAdapter } from '../adapters/EmailAdapter.js';
+import { NormalizedMessage, IEmailAdapter, SyncOptions } from '../adapters/EmailAdapter.js';
 import { ProviderType } from '@prisma/client';
 
 class SyncBroadcaster extends EventEmitter {
@@ -48,7 +48,10 @@ export class SyncService {
    * Syncs an email account by fetching remote messages, running AI triage,
    * saving to MySQL, and notifying connected clients in real time via SSE.
    */
-  static async syncAccount(accountId: string): Promise<{ success: boolean; ingestedCount: number; message: string }> {
+  static async syncAccount(
+    accountId: string,
+    options?: SyncOptions
+  ): Promise<{ success: boolean; ingestedCount: number; message: string }> {
     const account = await prisma.emailAccount.findUnique({
       where: { id: accountId },
     });
@@ -119,15 +122,28 @@ export class SyncService {
       let ingestedCount = 0;
       const sinceDate = account.lastSyncedAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // last 30 days
 
+      // Cache existing messages to avoid N SELECT queries
+      const existingDbMessages = await prisma.message.findMany({
+        where: { accountId: account.id },
+        select: { id: true, remoteMessageId: true, isRead: true, isFlagged: true },
+      });
+      const existingRemoteIds = new Set(existingDbMessages.map((m) => m.remoteMessageId));
+      const existingMessageMap = new Map<string, { id: string; isRead: boolean; isFlagged: boolean }>(
+        existingDbMessages.map((m) => [m.remoteMessageId, m])
+      );
+
+      // Cache thread IDs to avoid repeated thread queries
+      const threadCache = new Map<string, any>();
+
+      const syncOpts: SyncOptions = {
+        ...options,
+        existingRemoteIds,
+      };
+
       await adapter.syncMessages(sinceDate, async (batch: NormalizedMessage[]) => {
         for (const msg of batch) {
           // Check if message already exists in MySQL
-          const existingMessage = await prisma.message.findFirst({
-            where: {
-              accountId: account.id,
-              remoteMessageId: msg.remoteId,
-            },
-          });
+          const existingMessage = existingMessageMap.get(msg.remoteId);
 
           if (existingMessage) {
             // Update read and flagged status if changed
@@ -139,6 +155,8 @@ export class SyncService {
                   isFlagged: msg.isFlagged,
                 },
               });
+              existingMessage.isRead = msg.isRead;
+              existingMessage.isFlagged = msg.isFlagged;
             }
             continue;
           }
@@ -159,15 +177,19 @@ export class SyncService {
 
           // 3. Find or create conversation Thread
           const cleanSubject = msg.subject.replace(/^(re|fwd):\s*/i, '').trim();
-          let thread = await prisma.thread.findFirst({
-            where: {
-              accountId: account.id,
-              OR: [
-                { remoteThreadId: msg.remoteThreadId },
-                { subject: { contains: cleanSubject ? cleanSubject.substring(0, 50) : msg.subject } },
-              ],
-            },
-          });
+          let thread = threadCache.get(msg.remoteThreadId);
+
+          if (!thread) {
+            thread = await prisma.thread.findFirst({
+              where: {
+                accountId: account.id,
+                OR: [
+                  { remoteThreadId: msg.remoteThreadId },
+                  { subject: { contains: cleanSubject ? cleanSubject.substring(0, 50) : msg.subject } },
+                ],
+              },
+            });
+          }
 
           if (!thread) {
             thread = await prisma.thread.create({
@@ -182,11 +204,12 @@ export class SyncService {
                 lastMessageAt: msg.receivedAt,
               },
             });
+            threadCache.set(msg.remoteThreadId, thread);
           } else {
             // Update thread's last message time & highest priority if incoming is newer
             const msgDate = new Date(msg.receivedAt);
             const isNewer = msgDate > new Date(thread.lastMessageAt);
-            await prisma.thread.update({
+            thread = await prisma.thread.update({
               where: { id: thread.id },
               data: {
                 lastMessageAt: isNewer ? msgDate : thread.lastMessageAt,
@@ -196,10 +219,11 @@ export class SyncService {
                 priorityReason: priority.reason || thread.priorityReason,
               },
             });
+            threadCache.set(msg.remoteThreadId, thread);
           }
 
           // 4. Create Message in Database
-          await prisma.message.create({
+          const created = await prisma.message.create({
             data: {
               threadId: thread.id,
               accountId: account.id,
@@ -248,9 +272,22 @@ export class SyncService {
             },
           });
 
+          existingMessageMap.set(msg.remoteId, {
+            id: created.id,
+            isRead: msg.isRead,
+            isFlagged: msg.isFlagged,
+          });
+
           ingestedCount++;
         }
-      });
+
+        // Notify client of progress after each batch
+        syncBroadcaster.notifyUser(account.userId, 'SYNC_PROGRESS', {
+          accountId: account.id,
+          ingestedCount,
+          timestamp: new Date().toISOString(),
+        });
+      }, syncOpts);
 
       // Update account status to CONNECTED & record last synced timestamp
       await prisma.emailAccount.update({
@@ -288,7 +325,10 @@ export class SyncService {
   /**
    * Syncs all connected accounts for a given user.
    */
-  static async syncAllUserAccounts(userId: string): Promise<{ totalIngested: number; results: Array<{ accountId: string; count: number; error?: string }> }> {
+  static async syncAllUserAccounts(
+    userId: string,
+    options?: SyncOptions
+  ): Promise<{ totalIngested: number; results: Array<{ accountId: string; count: number; error?: string }> }> {
     const accounts = await prisma.emailAccount.findMany({
       where: { userId },
     });
@@ -298,7 +338,7 @@ export class SyncService {
 
     for (const acc of accounts) {
       try {
-        const res = await this.syncAccount(acc.id);
+        const res = await this.syncAccount(acc.id, options);
         totalIngested += res.ingestedCount;
         results.push({ accountId: acc.id, count: res.ingestedCount });
       } catch (err: unknown) {

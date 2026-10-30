@@ -52,11 +52,12 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
       isStarred,
       search,
       page = '1',
-      limit = '30',
+      limit = '100',
     } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 30;
+    let limitNum = parseInt(limit as string, 10) || 100;
+    if (limit === 'all') limitNum = 2000;
     const skip = (pageNum - 1) * limitNum;
 
     // Filter threads belonging to accounts owned by this user
@@ -156,6 +157,7 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
         limit: limitNum,
         total: totalThreads,
         totalPages: Math.ceil(totalThreads / limitNum),
+        hasMore: skip + threads.length < totalThreads,
       },
       unreadCount,
     });

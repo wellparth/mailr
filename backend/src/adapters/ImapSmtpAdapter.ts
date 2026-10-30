@@ -7,6 +7,7 @@ import {
   NormalizedAttachment,
   SendMailOptions,
   TestConnectionResult,
+  SyncOptions,
 } from './EmailAdapter.js';
 
 export interface ImapSmtpConfig {
@@ -119,7 +120,8 @@ export class ImapSmtpAdapter implements IEmailAdapter {
    */
   async syncMessages(
     _since: Date,
-    onBatch: (messages: NormalizedMessage[]) => Promise<void>
+    onBatch: (messages: NormalizedMessage[]) => Promise<void>,
+    options?: SyncOptions
   ): Promise<number> {
     await this.connect();
     if (!this.imapClient) {
@@ -141,11 +143,13 @@ export class ImapSmtpAdapter implements IEmailAdapter {
         return 0;
       }
 
-      // Fetch the latest 30 messages (or all if < 30)
-      const startSeq = Math.max(1, totalMessages - 29);
+      // Fetch up to maxTarget messages (or all if < maxTarget)
+      const maxTarget = options?.maxMessages || (options?.fullSync ? 1000 : 300);
+      const startSeq = Math.max(1, totalMessages - maxTarget + 1);
       const range = `${startSeq}:*`;
 
-      const normalizedBatch: NormalizedMessage[] = [];
+      let normalizedBatch: NormalizedMessage[] = [];
+      let totalSynced = 0;
 
       for await (const msg of this.imapClient.fetch(range, {
         uid: true,
@@ -218,6 +222,12 @@ export class ImapSmtpAdapter implements IEmailAdapter {
             hasAttachments: attachments.length > 0,
             attachments,
           });
+
+          if (normalizedBatch.length >= 25) {
+            await onBatch(normalizedBatch);
+            totalSynced += normalizedBatch.length;
+            normalizedBatch = [];
+          }
         } catch (parseError) {
           console.error(`Error parsing IMAP message UID ${msg.uid}:`, parseError);
         }
@@ -225,9 +235,10 @@ export class ImapSmtpAdapter implements IEmailAdapter {
 
       if (normalizedBatch.length > 0) {
         await onBatch(normalizedBatch);
+        totalSynced += normalizedBatch.length;
       }
 
-      return normalizedBatch.length;
+      return totalSynced;
     } finally {
       lock.release();
     }

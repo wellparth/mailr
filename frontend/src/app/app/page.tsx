@@ -69,20 +69,26 @@ export default function AppMailPage() {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
 
+  // Pagination state
+  const [page, setPage] = React.useState(1);
+  const [totalThreads, setTotalThreads] = React.useState(0);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleSyncNow = async () => {
+  const handleSyncNow = async (deep: boolean = false) => {
     if (isSyncing) return;
     setIsSyncing(true);
-    showToast("Syncing mailboxes...");
+    showToast(deep ? "Deep syncing all past emails from your mailbox..." : "Syncing mailboxes...");
     try {
       const endpoint =
         selectedAccountId && selectedAccountId !== "all"
-          ? `/api/accounts/${selectedAccountId}/sync`
-          : "/api/accounts/sync";
+          ? `/api/accounts/${selectedAccountId}/sync${deep ? "?full=true" : ""}`
+          : `/api/accounts/sync${deep ? "?full=true" : ""}`;
       const res = await apiFetch(endpoint, { method: "POST" });
       if (res && res.success !== false) {
         showToast(res.message || "Mailbox synced successfully.");
@@ -94,6 +100,27 @@ export default function AppMailPage() {
       showToast(err?.message || "Sync failed.");
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const res = await apiFetch(`/api/messages?page=${nextPage}&limit=150`);
+      const newThreads = res.threads || [];
+      if (newThreads.length > 0) {
+        setThreads((prev) => [...prev, ...newThreads]);
+        setPage(nextPage);
+        setHasMore(Boolean(res.pagination?.hasMore));
+      } else {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error("Failed to load more threads", err);
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -137,10 +164,13 @@ export default function AppMailPage() {
         setIsOnboardingOpen(true);
       }
 
-      // 3. Fetch threads
-      const messagesRes = await apiFetch("/api/messages");
+      // 3. Fetch threads (request up to 150 items)
+      const messagesRes = await apiFetch("/api/messages?limit=150");
       const fetchedThreads = messagesRes.threads || [];
       setThreads(fetchedThreads);
+      setTotalThreads(messagesRes.pagination?.total || fetchedThreads.length);
+      setHasMore(Boolean(messagesRes.pagination?.hasMore));
+      setPage(1);
 
       // Select first thread if none selected
       if (fetchedThreads.length > 0 && !selectedThreadId) {
@@ -183,7 +213,10 @@ export default function AppMailPage() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
+          if (data.type === "SYNC_PROGRESS") {
+            showToast(`Syncing: ${data.ingestedCount} emails processed...`);
+          } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
+            showToast(`Sync complete! Ingested ${data.ingestedCount || "new"} emails.`);
             fetchData();
           }
         } catch (e) {}
@@ -357,8 +390,13 @@ export default function AppMailPage() {
         onLogout={handleLogout}
         onTriagePromptSubmit={handleTriagePromptSubmit}
         triageRunning={triageRunning}
-        onSyncNow={handleSyncNow}
+        onSyncNow={() => handleSyncNow(false)}
         syncing={isSyncing}
+        totalThreads={totalThreads}
+        hasMore={hasMore}
+        isLoadingMore={isLoadingMore}
+        onLoadMore={handleLoadMore}
+        onDeepSyncNow={() => handleSyncNow(true)}
       />
 
       {/* Third Pane: Reading / Action Detail View */}

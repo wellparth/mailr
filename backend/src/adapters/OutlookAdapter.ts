@@ -1,4 +1,10 @@
-import { IEmailAdapter, NormalizedMessage, SendMailOptions, TestConnectionResult } from './EmailAdapter.js';
+import {
+  IEmailAdapter,
+  NormalizedMessage,
+  SendMailOptions,
+  TestConnectionResult,
+  SyncOptions,
+} from './EmailAdapter.js';
 
 export class OutlookAdapter implements IEmailAdapter {
   private accessToken: string;
@@ -30,7 +36,8 @@ export class OutlookAdapter implements IEmailAdapter {
 
   async syncMessages(
     _since: Date,
-    _onBatch: (messages: NormalizedMessage[]) => Promise<void>
+    _onBatch: (messages: NormalizedMessage[]) => Promise<void>,
+    _options?: SyncOptions
   ): Promise<number> {
     // In production, queries https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta
     return 0;

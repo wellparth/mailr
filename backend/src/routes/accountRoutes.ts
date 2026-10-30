@@ -323,7 +323,10 @@ router.post('/:id/sync', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    const result = await SyncService.syncAccount(account.id);
+    const isFull = req.query.full === 'true' || req.query.deep === 'true' || req.body?.full === true;
+    const maxMessages = req.query.max ? parseInt(req.query.max as string, 10) : (req.body?.maxMessages || (isFull ? 1000 : 300));
+
+    const result = await SyncService.syncAccount(account.id, { fullSync: isFull, maxMessages });
     res.json(result);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Sync failed';
@@ -334,7 +337,10 @@ router.post('/:id/sync', async (req: AuthenticatedRequest, res: Response) => {
 // 8. Trigger Sync for ALL connected accounts
 router.post('/sync', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const result = await SyncService.syncAllUserAccounts(req.user!.id);
+    const isFull = req.query.full === 'true' || req.query.deep === 'true' || req.body?.full === true;
+    const maxMessages = req.query.max ? parseInt(req.query.max as string, 10) : (req.body?.maxMessages || (isFull ? 1000 : 300));
+
+    const result = await SyncService.syncAllUserAccounts(req.user!.id, { fullSync: isFull, maxMessages });
     res.json({
       success: true,
       message: `Sync complete. Ingested ${result.totalIngested} new message(s).`,
