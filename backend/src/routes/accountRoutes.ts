@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 import { discoverEmailSettings } from '../utils/autoDiscovery.js';
 import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
+import { validateMailDestination } from '../utils/networkSecurity.js';
 import { ProviderType } from '@prisma/client';
 import { syncBroadcaster, SyncService } from '../services/syncService.js';
 
@@ -73,6 +74,10 @@ router.post('/test-connection', async (req: AuthenticatedRequest, res: Response)
       return;
     }
 
+    // SSRF & Port Scanning Protection: Validate destination mail hosts and ports
+    await validateMailDestination(imapHost, imapPort || 993);
+    await validateMailDestination(smtpHost, smtpPort || 587);
+
     const adapter = new ImapSmtpAdapter({
       userEmail: email,
       password,
@@ -109,6 +114,10 @@ const handleConnectAccount = async (req: AuthenticatedRequest, res: Response) =>
       res.status(400).json({ error: 'Email address is required.' });
       return;
     }
+
+    // SSRF & Port Scanning Protection: Validate destination mail hosts and ports
+    if (imapHost) await validateMailDestination(imapHost, imapPort || 993);
+    if (smtpHost) await validateMailDestination(smtpHost, smtpPort || 587);
 
     // Determine ProviderType enum and default hosts
     let providerEnum: ProviderType = ProviderType.IMAP_SMTP;

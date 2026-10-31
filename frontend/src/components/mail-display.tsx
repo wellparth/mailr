@@ -8,10 +8,12 @@ import {
   Reply,
   Calendar,
   Sparkles,
+  Clock,
+  MailX,
+  Check,
   Download,
   Paperclip,
   CheckCircle2,
-  Clock,
   Send,
   Shield,
   ExternalLink,
@@ -28,12 +30,36 @@ import {
   Bot,
   RefreshCw,
   Copy,
-  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { apiFetch } from "@/lib/api";
+import DOMPurify from "dompurify";
+
+// Helper to sanitize incoming email HTML securely against Stored XSS
+function sanitizeEmailHtml(dirtyHtml: string): string {
+  if (!dirtyHtml) return "";
+  if (typeof window === "undefined") return "";
+
+  try {
+    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+      if ("target" in node && node.tagName === "A") {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener noreferrer");
+      }
+    });
+  } catch {
+    // Hook already active
+  }
+
+  return DOMPurify.sanitize(dirtyHtml, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "base", "form", "link"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onmouseenter", "onmouseleave"],
+    ADD_ATTR: ["target", "rel"],
+  });
+}
 
 interface CalendarProposal {
   id: string;
@@ -94,6 +120,7 @@ interface MailDisplayProps {
   onStarToggle: (threadId: string, currentStatus: boolean) => void;
   onArchive: (threadId: string) => void;
   onDelete: (threadId: string) => void;
+  onSnooze?: (threadId: string, until: string | null) => void;
   onReplySuccess: () => void;
   onOpenConnectModal: () => void;
   onOpenCompose: () => void;
@@ -106,6 +133,7 @@ export function MailDisplay({
   onStarToggle,
   onArchive,
   onDelete,
+  onSnooze,
   onReplySuccess,
   onOpenConnectModal,
   onOpenCompose,
@@ -113,6 +141,9 @@ export function MailDisplay({
 }: MailDisplayProps) {
   const [replyText, setReplyText] = React.useState("");
   const [generatingTone, setGeneratingTone] = React.useState<string | null>(null);
+  const [showSnoozeMenu, setShowSnoozeMenu] = React.useState(false);
+  const [unsubscribing, setUnsubscribing] = React.useState(false);
+  const [unsubscribed, setUnsubscribed] = React.useState(false);
   const [sendingReply, setSendingReply] = React.useState(false);
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const [previewImage, setPreviewImage] = React.useState<string | null>(null);
@@ -344,6 +375,44 @@ export function MailDisplay({
     }
   };
 
+  const handleSnoozeSelect = async (until: string | null) => {
+    setShowSnoozeMenu(false);
+    if (onSnooze && thread) {
+      onSnooze(thread.id, until);
+    } else if (thread) {
+      try {
+        await apiFetch(`/api/messages/thread/${thread.id}/snooze`, {
+          method: 'POST',
+          body: JSON.stringify({ snoozedUntil: until }),
+        });
+        setActionNotice(until ? `Thread snoozed until ${new Date(until).toLocaleString()}` : 'Thread unsnoozed');
+        setTimeout(() => setActionNotice(null), 4000);
+      } catch (err: any) {
+        console.error('Snooze error', err);
+      }
+    }
+  };
+
+  const handleUnsubscribe = async () => {
+    if (!thread || unsubscribing) return;
+    setUnsubscribing(true);
+    try {
+      const res = await apiFetch<{ success: boolean; unsubscribeUrl?: string }>(`/api/messages/thread/${thread.id}/unsubscribe`, {
+        method: 'POST',
+      });
+      setUnsubscribed(true);
+      setActionNotice(res.unsubscribeUrl ? 'Unsubscribed & thread auto-archived.' : 'Thread auto-archived.');
+      setTimeout(() => setActionNotice(null), 4000);
+      if (res.unsubscribeUrl) {
+        window.open(res.unsubscribeUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err: any) {
+      console.error('Unsubscribe error', err);
+    } finally {
+      setUnsubscribing(false);
+    }
+  };
+
   // Generate .ics calendar download
   const handleDownloadIcs = (proposal: CalendarProposal) => {
     const formatDate = (dateStr: string) => {
@@ -486,12 +555,79 @@ export function MailDisplay({
           >
             <Star className={`h-4 w-4 ${thread.isStarred ? "fill-amber-400" : ""}`} />
           </Button>
+          {/* Snooze Button */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSnoozeMenu((prev) => !prev)}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+              title="Snooze thread (H)"
+            >
+              <Clock className="h-4 w-4" />
+            </Button>
+
+            {showSnoozeMenu && (
+              <div className="absolute right-0 top-full mt-1.5 w-52 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs space-y-1">
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">
+                  Snooze Until
+                </div>
+                <button
+                  onClick={() => {
+                    const d = new Date(Date.now() + 4 * 60 * 60 * 1000);
+                    handleSnoozeSelect(d.toISOString());
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                >
+                  Later Today (+4 hours)
+                </button>
+                <button
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 1);
+                    d.setHours(9, 0, 0, 0);
+                    handleSnoozeSelect(d.toISOString());
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                >
+                  Tomorrow Morning (9:00 AM)
+                </button>
+                <button
+                  onClick={() => {
+                    const d = new Date();
+                    const day = d.getDay();
+                    const daysUntilSat = (6 - day + 7) % 7 || 7;
+                    d.setDate(d.getDate() + daysUntilSat);
+                    d.setHours(9, 0, 0, 0);
+                    handleSnoozeSelect(d.toISOString());
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                >
+                  This Weekend (Saturday 9:00 AM)
+                </button>
+                <button
+                  onClick={() => {
+                    const d = new Date();
+                    const day = d.getDay();
+                    const daysUntilMon = (8 - day) % 7 || 7;
+                    d.setDate(d.getDate() + daysUntilMon);
+                    d.setHours(9, 0, 0, 0);
+                    handleSnoozeSelect(d.toISOString());
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                >
+                  Next Week (Monday 9:00 AM)
+                </button>
+              </div>
+            )}
+          </div>
+
           <Button
             variant="ghost"
             size="sm"
             onClick={() => onArchive(thread.id)}
             className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-            title="Archive"
+            title="Archive (E)"
           >
             <Archive className="h-4 w-4" />
           </Button>
@@ -869,12 +1005,31 @@ export function MailDisplay({
           </div>
         )}
 
+        {/* 1-Click Newsletter Unsubscribe Banner */}
+        {Boolean(latestMessage?.bodyHtml?.match(/unsubscribe|optout|opt-out/i) || latestMessage?.subject?.match(/newsletter|digest|weekly/i)) && !unsubscribed && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between text-xs text-amber-200">
+            <div className="flex items-center gap-2">
+              <MailX className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Newsletter / marketing email detected.</span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={unsubscribing}
+              onClick={handleUnsubscribe}
+              className="h-7 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-500/20 hover:text-amber-200 cursor-pointer"
+            >
+              {unsubscribing ? "Unsubscribing..." : "Unsubscribe in 1-Click"}
+            </Button>
+          </div>
+        )}
+
         {/* Email Message Content */}
         <div className="prose prose-invert max-w-none text-sm text-foreground/90 leading-relaxed font-sans space-y-4">
           {latestMessage?.bodyHtml ? (
             <div
               className="email-body-content overflow-x-auto bg-card/20 p-4 rounded-xl border border-border/30"
-              dangerouslySetInnerHTML={{ __html: latestMessage.bodyHtml }}
+              dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(latestMessage.bodyHtml) }}
             />
           ) : (
             <div className="whitespace-pre-wrap font-sans text-sm bg-card/20 p-4 rounded-xl border border-border/30">

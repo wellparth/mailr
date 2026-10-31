@@ -45,7 +45,7 @@ export class AIService {
     // Days detection (e.g. older than 7 days, last 3 days)
     const daysMatch = lower.match(/(\d+)\s+days?/);
     if (daysMatch) {
-      filters.olderThanDays = parseInt(daysMatch[1], 10);
+      filters.olderThanDays = Math.min(Math.max(1, parseInt(daysMatch[1], 10) || 1), 3650);
     }
 
     if (lower.includes('unread')) {
@@ -306,6 +306,9 @@ export class AIService {
         .split('.')[0] + 'Z';
 
     const uid = `mailr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}@mailr.app`;
+    // Sanitize CRLF to prevent RFC 5545 iCalendar property injection
+    const safeTitle = (event.title || '').replace(/[\r\n]+/g, ' ').trim();
+    const safeDescription = (event.description || '').replace(/\r?\n/g, '\\n').replace(/[\r\n]/g, '');
 
     return [
       'BEGIN:VCALENDAR',
@@ -318,12 +321,14 @@ export class AIService {
       `DTSTAMP:${formatDate(new Date())}`,
       `DTSTART:${formatDate(new Date(event.startTime))}`,
       `DTEND:${formatDate(new Date(event.endTime))}`,
-      `SUMMARY:${event.title}`,
-      `DESCRIPTION:${event.description.replace(/\n/g, '\\n')}`,
+      `SUMMARY:${safeTitle}`,
+      `DESCRIPTION:${safeDescription}`,
       `STATUS:CONFIRMED`,
-      ...event.attendees.map(
-        (a) => `ATTENDEE;CN=${a.name || a.email};ROLE=REQ-PARTICIPANT:mailto:${a.email}`
-      ),
+      ...event.attendees.map((a) => {
+        const safeName = (a.name || a.email || '').replace(/[\r\n]+/g, ' ').trim();
+        const safeEmail = (a.email || '').replace(/[\r\n]+/g, '').trim();
+        return `ATTENDEE;CN=${safeName};ROLE=REQ-PARTICIPANT:mailto:${safeEmail}`;
+      }),
       'END:VEVENT',
       'END:VCALENDAR',
     ].join('\r\n');

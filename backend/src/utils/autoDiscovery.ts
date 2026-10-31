@@ -106,6 +106,9 @@ const KNOWN_PROVIDERS: Record<string, DiscoveredConfig> = {
   },
 };
 
+const DOMAIN_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+const HOST_REGEX = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
 export async function discoverEmailSettings(emailAddress: string): Promise<DiscoveredConfig> {
   const parts = emailAddress.split('@');
   if (parts.length !== 2) {
@@ -114,6 +117,11 @@ export async function discoverEmailSettings(emailAddress: string): Promise<Disco
 
   const domain = parts[1].toLowerCase().trim();
 
+  // Validate domain format to prevent path traversal or injection in autoconfig lookup
+  if (!DOMAIN_REGEX.test(domain)) {
+    throw new Error('Invalid email address domain format.');
+  }
+
   // Check known presets
   if (KNOWN_PROVIDERS[domain]) {
     return KNOWN_PROVIDERS[domain];
@@ -121,7 +129,7 @@ export async function discoverEmailSettings(emailAddress: string): Promise<Disco
 
   // Attempt Mozilla ISPDB lookups via fetch if available
   try {
-    const ispdbUrl = `https://autoconfig.thunderbird.net/v1.1/${domain}`;
+    const ispdbUrl = `https://autoconfig.thunderbird.net/v1.1/${encodeURIComponent(domain)}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
 
@@ -137,18 +145,24 @@ export async function discoverEmailSettings(emailAddress: string): Promise<Disco
       const smtpPortMatch = xmlText.match(/<outgoingServer type="smtp">[\s\S]*?<port>(.*?)<\/port>/i);
 
       if (imapHostMatch && smtpHostMatch) {
-        const imapPort = parseInt(imapPortMatch ? imapPortMatch[1] : '993', 10);
-        const smtpPort = parseInt(smtpPortMatch ? smtpPortMatch[1] : '587', 10);
-        return {
-          provider: 'IMAP_SMTP',
-          imapHost: imapHostMatch[1],
-          imapPort: isNaN(imapPort) ? 993 : imapPort,
-          imapSecure: imapPort === 993,
-          smtpHost: smtpHostMatch[1],
-          smtpPort: isNaN(smtpPort) ? 587 : smtpPort,
-          smtpSecure: smtpPort === 465,
-          notes: 'Discovered via Mozilla ISPDB autoconfiguration.',
-        };
+        const imapHost = imapHostMatch[1].trim();
+        const smtpHost = smtpHostMatch[1].trim();
+
+        // Validate returned hostnames from XML
+        if (HOST_REGEX.test(imapHost) && HOST_REGEX.test(smtpHost)) {
+          const imapPort = parseInt(imapPortMatch ? imapPortMatch[1] : '993', 10);
+          const smtpPort = parseInt(smtpPortMatch ? smtpPortMatch[1] : '587', 10);
+          return {
+            provider: 'IMAP_SMTP',
+            imapHost,
+            imapPort: isNaN(imapPort) ? 993 : imapPort,
+            imapSecure: imapPort === 993,
+            smtpHost,
+            smtpPort: isNaN(smtpPort) ? 587 : smtpPort,
+            smtpSecure: smtpPort === 465,
+            notes: 'Discovered via Mozilla ISPDB autoconfiguration.',
+          };
+        }
       }
     }
   } catch {

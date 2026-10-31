@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import prisma from '../db.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { AIService } from '../services/aiService.js';
+import { LLMClient } from '../services/llmClient.js';
+import { AgentService } from '../services/agentService.js';
 import { syncBroadcaster } from '../services/syncService.js';
 import { ProposalStatus } from '@prisma/client';
 
@@ -213,6 +215,83 @@ router.post('/draft', async (req: AuthenticatedRequest, res: Response) => {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Draft error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+
+// 7. Inline AI Composer Rewrite Assistant
+router.post('/compose/rewrite', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { text, style = 'professional' } = req.body;
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      res.status(400).json({ error: 'Draft text is required for rewriting.' });
+      return;
+    }
+
+    const { provider, apiKey } = await AgentService.getUserAIConfig(req.user!.id);
+    const hasKey = Boolean(apiKey || process.env.NVIDIA_API_KEY || process.env.OPENAI_API_KEY);
+
+    let rewritten = '';
+    if (hasKey) {
+      let promptInstruction = '';
+      switch (style) {
+        case 'concise':
+          promptInstruction = 'Rewrite this email draft to be extremely concise, punchy, and direct, cutting all filler words.';
+          break;
+        case 'friendly':
+          promptInstruction = 'Rewrite this email draft to sound warm, friendly, collaborative, and approachable while remaining polite.';
+          break;
+        case 'grammar':
+          promptInstruction = 'Fix all grammar, spelling, punctuation, and phrasing in this email draft while preserving its exact original tone and structure.';
+          break;
+        case 'professional':
+        default:
+          promptInstruction = 'Rewrite this email draft with an executive, highly polished, confident, and professional tone.';
+          break;
+      }
+
+      try {
+        const aiRes = await LLMClient.generate({
+          provider,
+          apiKey,
+          systemPrompt: 'You are an executive email editor. Respond ONLY with the revised email body text. Do not include commentary, disclaimers, or subject lines.',
+          userPrompt: `${promptInstruction}\n\nOriginal Draft:\n"${text}"`,
+          temperature: 0.3,
+          maxTokens: 1000,
+        });
+        rewritten = aiRes.text.trim();
+      } catch (llmErr) {
+        console.warn('[Rewrite AI notice] Falling back to heuristic rewrite:', llmErr);
+      }
+    }
+
+    // Heuristic fallback if LLM is not configured or times out
+    if (!rewritten) {
+      const clean = text.trim();
+      if (style === 'concise') {
+        rewritten = clean
+          .replace(/I am writing to let you know that/gi, '')
+          .replace(/Please feel free to/gi, 'Please')
+          .replace(/At your earliest convenience/gi, 'soon')
+          .replace(/In order to/gi, 'To')
+          .trim();
+      } else if (style === 'friendly') {
+        rewritten = `Hi there,\n\nHope you are having a wonderful week!\n\n${clean}\n\nThanks so much,\n`;
+      } else if (style === 'grammar') {
+        rewritten = clean.replace(/\s+/g, ' ');
+      } else {
+        rewritten = `Dear Colleague,\n\nI hope this message finds you well.\n\n${clean}\n\nSincerely,\n`;
+      }
+    }
+
+    res.json({
+      success: true,
+      rewritten,
+      style,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Rewrite error';
     res.status(500).json({ error: msg });
   }
 });

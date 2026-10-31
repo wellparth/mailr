@@ -115,6 +115,7 @@ model Thread {
   priorityReason String?       @db.Text @map("priority_reason")
   isStarred      Boolean       @default(false) @map("is_starred")
   isArchived     Boolean       @default(false) @map("is_archived")
+  snoozedUntil   DateTime?     @map("snoozed_until")
   lastMessageAt  DateTime      @map("last_message_at")
   messages       Message[]
   notes          ThreadNote[]
@@ -147,6 +148,10 @@ model Message {
   isFlagged          Boolean            @default(false) @map("is_flagged")
   isArchived         Boolean            @default(false) @map("is_archived")
   hasAttachments     Boolean            @default(false) @map("has_attachments")
+  status             String             @default("SENT") @map("status")
+  scheduledAt        DateTime?          @map("scheduled_at")
+  unsubscribeUrl     String?            @db.Text @map("unsubscribe_url")
+  isNewsletter       Boolean            @default(false) @map("is_newsletter")
   receivedAt         DateTime           @map("received_at")
   attachments        Attachment[]
   calendarProposals  CalendarProposal[]

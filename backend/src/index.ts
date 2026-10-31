@@ -8,6 +8,7 @@ import aiRoutes from './routes/aiRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 
 import { SyncService } from './services/syncService.js';
+import { ScheduledMailService } from './services/scheduledMailService.js';
 import prisma from './db.js';
 
 const app = express();
@@ -24,6 +25,19 @@ app.use(
     credentials: true,
   })
 );
+
+// Disable fingerprinting header
+app.disable('x-powered-by');
+
+// Defensive HTTP Security Headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -57,6 +71,9 @@ app.use((err: Error, _req: Request, res: Response, _next: express.NextFunction) 
 app.listen(PORT, () => {
   console.log(`🚀 Mailr Backend API listening on http://localhost:${PORT}`);
   console.log(`📡 Health Check: http://localhost:${PORT}/api/health`);
+
+  // Start Scheduled Mail Worker
+  ScheduledMailService.start(30000);
 
   // Start periodic background sync worker (polls active accounts every 3 minutes)
   const SYNC_INTERVAL_MS = 3 * 60 * 1000;

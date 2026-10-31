@@ -155,6 +155,21 @@ router.post('/calendar/integrations', async (req: AuthenticatedRequest, res: Res
       return;
     }
 
+    let sanitizedBookingUrl: string | null = null;
+    if (bookingUrl && typeof bookingUrl === 'string' && bookingUrl.trim().length > 0) {
+      try {
+        const parsed = new URL(bookingUrl.trim());
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          res.status(400).json({ error: 'bookingUrl must use http or https protocol' });
+          return;
+        }
+        sanitizedBookingUrl = parsed.toString();
+      } catch {
+        res.status(400).json({ error: 'Invalid bookingUrl format' });
+        return;
+      }
+    }
+
     const integration = await prisma.calendarIntegration.upsert({
       where: {
         userId_provider: {
@@ -165,11 +180,11 @@ router.post('/calendar/integrations', async (req: AuthenticatedRequest, res: Res
       create: {
         userId: req.user!.id,
         provider,
-        bookingUrl: bookingUrl ? bookingUrl.trim() : null,
+        bookingUrl: sanitizedBookingUrl,
         isDefault,
       },
       update: {
-        bookingUrl: bookingUrl ? bookingUrl.trim() : null,
+        bookingUrl: sanitizedBookingUrl,
         isDefault,
       },
     });
@@ -251,6 +266,29 @@ router.post('/byok/test', async (req: AuthenticatedRequest, res: Response) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Test failed';
     res.status(500).json({ success: false, message: msg });
+  }
+});
+
+
+// 12. Daily Executive Morning Briefing
+router.get('/briefing', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const briefing = await AgentService.getMorningBriefing(req.user!.id);
+    res.json(briefing);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Briefing error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 13. Smart Follow-Up Suggestions
+router.get('/follow-ups', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const suggestions = await AgentService.getFollowUpSuggestions(req.user!.id);
+    res.json(suggestions);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Follow-up suggestions error';
+    res.status(500).json({ error: msg });
   }
 });
 

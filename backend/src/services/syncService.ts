@@ -48,6 +48,62 @@ export class SyncService {
    * Syncs an email account by fetching remote messages, running AI triage,
    * saving to MySQL, and notifying connected clients in real time via SSE.
    */
+  /**
+   * Instantiates the appropriate email adapter (Gmail, Outlook, or IMAP/SMTP)
+   * for a given EmailAccount record, handling credential decryption.
+   */
+  static async getAdapterForAccount(account: any): Promise<IEmailAdapter> {
+    if (account.provider === ProviderType.GMAIL && account.encryptedAccessToken) {
+      const accessToken = decryptSecret(account.encryptedAccessToken);
+      const refreshToken = account.encryptedRefreshToken
+        ? decryptSecret(account.encryptedRefreshToken)
+        : undefined;
+      return new GmailAdapter({
+        accessToken,
+        refreshToken,
+        userEmail: account.emailAddress,
+        onTokenRefreshed: async (newToken: string) => {
+          await prisma.emailAccount.update({
+            where: { id: account.id },
+            data: { encryptedAccessToken: encryptSecret(newToken) },
+          });
+        },
+      });
+    } else if (account.provider === ProviderType.OUTLOOK && account.encryptedAccessToken) {
+      const accessToken = decryptSecret(account.encryptedAccessToken);
+      const refreshToken = account.encryptedRefreshToken
+        ? decryptSecret(account.encryptedRefreshToken)
+        : undefined;
+      return new OutlookAdapter({
+        accessToken,
+        refreshToken,
+        userEmail: account.emailAddress,
+      });
+    } else {
+      // IMAP/SMTP (including Gmail & Outlook with App Passwords)
+      let password = '';
+      if (account.encryptedCredentials) {
+        try {
+          const parsed = JSON.parse(decryptSecret(account.encryptedCredentials));
+          password = parsed.password || '';
+        } catch {
+          password = decryptSecret(account.encryptedCredentials);
+        }
+      }
+
+      return new ImapSmtpAdapter({
+        userEmail: account.emailAddress,
+        password,
+        imapHost: account.imapHost || (account.provider === ProviderType.GMAIL ? 'imap.gmail.com' : 'outlook.office365.com'),
+        imapPort: account.imapPort || 993,
+        imapSecure: true,
+        smtpHost: account.smtpHost || (account.provider === ProviderType.GMAIL ? 'smtp.gmail.com' : 'smtp.office365.com'),
+        smtpPort: account.smtpPort || 587,
+        smtpSecure: false,
+      });
+    }
+  }
+
   static async syncAccount(
     accountId: string,
     options?: SyncOptions
@@ -67,57 +123,7 @@ export class SyncService {
     });
 
     try {
-      let adapter: IEmailAdapter;
-
-      if (account.provider === ProviderType.GMAIL && account.encryptedAccessToken) {
-        const accessToken = decryptSecret(account.encryptedAccessToken);
-        const refreshToken = account.encryptedRefreshToken
-          ? decryptSecret(account.encryptedRefreshToken)
-          : undefined;
-        adapter = new GmailAdapter({
-          accessToken,
-          refreshToken,
-          userEmail: account.emailAddress,
-          onTokenRefreshed: async (newToken: string) => {
-            await prisma.emailAccount.update({
-              where: { id: account.id },
-              data: { encryptedAccessToken: encryptSecret(newToken) },
-            });
-          },
-        });
-      } else if (account.provider === ProviderType.OUTLOOK && account.encryptedAccessToken) {
-        const accessToken = decryptSecret(account.encryptedAccessToken);
-        const refreshToken = account.encryptedRefreshToken
-          ? decryptSecret(account.encryptedRefreshToken)
-          : undefined;
-        adapter = new OutlookAdapter({
-          accessToken,
-          refreshToken,
-          userEmail: account.emailAddress,
-        });
-      } else {
-        // IMAP/SMTP (including Gmail & Outlook with App Passwords)
-        let password = '';
-        if (account.encryptedCredentials) {
-          try {
-            const parsed = JSON.parse(decryptSecret(account.encryptedCredentials));
-            password = parsed.password || '';
-          } catch {
-            password = decryptSecret(account.encryptedCredentials);
-          }
-        }
-
-        adapter = new ImapSmtpAdapter({
-          userEmail: account.emailAddress,
-          password,
-          imapHost: account.imapHost || (account.provider === ProviderType.GMAIL ? 'imap.gmail.com' : 'outlook.office365.com'),
-          imapPort: account.imapPort || 993,
-          imapSecure: true,
-          smtpHost: account.smtpHost || (account.provider === ProviderType.GMAIL ? 'smtp.gmail.com' : 'smtp.office365.com'),
-          smtpPort: account.smtpPort || 587,
-          smtpSecure: false,
-        });
-      }
+      const adapter = await SyncService.getAdapterForAccount(account);
 
       let ingestedCount = 0;
       const sinceDate = account.lastSyncedAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // last 30 days

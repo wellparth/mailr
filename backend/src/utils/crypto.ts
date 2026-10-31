@@ -5,7 +5,10 @@ const ALGORITHM = 'aes-256-gcm';
 function getMasterKey(): Buffer {
   const hexKey = process.env.ENCRYPTION_MASTER_KEY;
   if (!hexKey) {
-    // Fallback default dev key (32 bytes hex) if not set
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: ENCRYPTION_MASTER_KEY environment variable is required in production.');
+    }
+    console.warn('[SECURITY WARNING] ENCRYPTION_MASTER_KEY is not configured in .env. A 64-hex character key is required.');
     return Buffer.from('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex');
   }
   const key = Buffer.from(hexKey, 'hex');

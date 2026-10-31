@@ -4,6 +4,10 @@ import * as React from "react";
 import {
   Inbox,
   Sparkles,
+  Clock,
+  Calendar,
+  SunMedium,
+  Keyboard,
   Star,
   Send,
   FileText,
@@ -16,14 +20,17 @@ import {
   Mail,
   ChevronDown,
   CheckCircle2,
-  Calendar,
   Layers,
   Image as ImageIcon,
   Paperclip,
-  Clock,
   Filter,
   RefreshCw,
+  PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
+  GripVertical,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 import {
   Sidebar,
@@ -99,7 +106,9 @@ interface MailSidebarProps {
   selectedThreadId: string | null;
   onSelectThread: (id: string) => void;
   activeNav: string;
-  onNavChange: (nav: "inbox" | "priority" | "starred" | "drafts" | "sent" | "trash") => void;
+  onNavChange: (nav: any) => void;
+  onOpenBriefing?: () => void;
+  onOpenShortcuts?: () => void;
   selectedAccountId: string;
   onAccountChange: (accountId: string) => void;
   unreadOnly: boolean;
@@ -119,6 +128,12 @@ interface MailSidebarProps {
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
   onDeepSyncNow?: () => void;
+  isRailCollapsed?: boolean;
+  onToggleRail?: () => void;
+  mailListWidth?: number;
+  onMailListWidthChange?: (width: number) => void;
+  isDragging?: boolean;
+  setIsDragging?: (dragging: boolean) => void;
 }
 
 export function MailSidebar({
@@ -148,8 +163,56 @@ export function MailSidebar({
   isLoadingMore = false,
   onLoadMore,
   onDeepSyncNow,
+  onOpenBriefing,
+  onOpenShortcuts,
+  isRailCollapsed = false,
+  onToggleRail,
+  mailListWidth = 340,
+  onMailListWidthChange,
+  isDragging = false,
+  setIsDragging,
 }: MailSidebarProps) {
   const [nlInput, setNlInput] = React.useState("");
+
+  // Resize handler for Mail List Sidebar
+  const handleMouseDown = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startWidth = mailListWidth;
+
+      setIsDragging?.(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        moveEvent.preventDefault();
+        const delta = moveEvent.clientX - startX;
+        const minWidth = 260;
+        const maxWidth = Math.max(minWidth, Math.min(680, window.innerWidth - 420));
+        const newWidth = Math.min(Math.max(startWidth + delta, minWidth), maxWidth);
+        onMailListWidthChange?.(newWidth);
+      };
+
+      const handleMouseUp = () => {
+        setIsDragging?.(false);
+        document.body.style.removeProperty("cursor");
+        document.body.style.removeProperty("user-select");
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [mailListWidth, onMailListWidthChange, setIsDragging]
+  );
+
+  const handleDoubleClick = React.useCallback(() => {
+    onMailListWidthChange?.(340);
+  }, [onMailListWidthChange]);
 
   // Quick Triage Suggestions
   const triageChips = [
@@ -175,9 +238,10 @@ export function MailSidebar({
   const navItems = [
     { title: "Inbox", id: "inbox", icon: Inbox, badge: unreadCount },
     { title: "Priority AI", id: "priority", icon: Sparkles, badge: priorityCount, badgeColor: "text-emerald-400 bg-emerald-950/80 border-emerald-500/40" },
+    { title: "Snoozed", id: "snoozed", icon: Clock },
+    { title: "Scheduled", id: "scheduled", icon: Calendar },
     { title: "Starred", id: "starred", icon: Star },
     { title: "Sent", id: "sent", icon: Send },
-    { title: "Drafts", id: "drafts", icon: FileText },
     { title: "Trash", id: "trash", icon: Trash2 },
   ];
 
@@ -202,12 +266,16 @@ export function MailSidebar({
   return (
     <Sidebar
       collapsible="icon"
-      className="overflow-hidden border-r border-border [&>[data-sidebar=sidebar]]:flex-row"
+      className={cn(
+        "overflow-visible border-r border-border [&>[data-sidebar=sidebar]]:flex-row",
+        isDragging && "transition-none [&_*]:transition-none"
+      )}
     >
       {/* =========================================
           PRIMARY RAIL SIDEBAR (56px)
           Designed with strong purposeful workflows:
           - Brand Home
+          - Collapse Toggle Action
           - Compose Action
           - Connected Inboxes Rail (Direct 1-click switch & Add)
           - Core Folders
@@ -215,12 +283,17 @@ export function MailSidebar({
           ========================================= */}
       <Sidebar
         collapsible="none"
-        className="!w-[calc(var(--sidebar-width-icon)_+_1px)] border-r border-border bg-card/60 flex flex-col justify-between shrink-0"
+        className={cn(
+          "border-r border-border bg-card/60 flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out",
+          isRailCollapsed
+            ? "!w-0 opacity-0 overflow-hidden border-r-0 p-0 pointer-events-none"
+            : "!w-[56px] opacity-100"
+        )}
       >
-        {/* Top: Brand Monogram */}
-        <SidebarHeader className="p-2 border-b border-border/40">
+        {/* Top: Brand Monogram + Collapse Rail Button */}
+        <SidebarHeader className="p-2 border-b border-border/40 flex flex-col items-center gap-1.5">
           <SidebarMenu>
-            <SidebarMenuItem>
+            <SidebarMenuItem className="flex flex-col items-center gap-1.5">
               <SidebarMenuButton
                 size="lg"
                 onClick={() => {
@@ -232,6 +305,18 @@ export function MailSidebar({
               >
                 <Mail className="h-5 w-5" />
               </SidebarMenuButton>
+
+              {/* Collapse Rail Button */}
+              {onToggleRail && (
+                <button
+                  type="button"
+                  onClick={onToggleRail}
+                  className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
+                  title="Collapse sidebar ([ or Ctrl+B)"
+                >
+                  <PanelLeftClose className="h-3.5 w-3.5" />
+                </button>
+              )}
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
@@ -438,25 +523,64 @@ export function MailSidebar({
           ========================================= */}
       <Sidebar
         collapsible="none"
-        className="hidden flex-1 md:flex w-80 max-w-xs border-r border-border bg-background flex-col"
+        style={{ width: `${mailListWidth}px`, minWidth: `${mailListWidth}px`, maxWidth: `${mailListWidth}px` }}
+        className={cn(
+          "hidden md:flex border-r border-border bg-background flex-col relative shrink-0 h-full",
+          isDragging ? "select-none transition-none" : "transition-[width] duration-200 ease-in-out"
+        )}
       >
         {/* Drawer Header */}
-        <SidebarHeader className="gap-2.5 border-b border-border p-3.5 bg-card/20">
-          <div className="flex w-full items-center justify-between">
-            {/* Account Switcher Dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger className="flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary/60 hover:bg-secondary px-2.5 py-1.5 rounded-md border border-border/50 max-w-[190px] truncate transition-colors outline-none cursor-pointer">
-                <span
-                  className="h-2 w-2 rounded-full shrink-0"
-                  style={{
-                    backgroundColor: selectedAccount?.colorCode || "#38bdf8",
-                  }}
-                />
-                <span className="truncate">
-                  {selectedAccount ? selectedAccount.emailAddress : "All Accounts"}
-                </span>
-                <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0 ml-auto" />
-              </DropdownMenuTrigger>
+        <SidebarHeader className="gap-2.5 border-b border-border p-3.5 bg-card/20 shrink-0">
+          <div className="flex w-full items-center justify-between gap-1.5">
+            {/* Left cluster: Sidebar toggle button + Quick New (if collapsed) + Account Switcher */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              {onToggleRail && (
+                <button
+                  type="button"
+                  onClick={onToggleRail}
+                  className={cn(
+                    "h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-colors cursor-pointer",
+                    isRailCollapsed
+                      ? "bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border border-sky-500/30 shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  )}
+                  title={isRailCollapsed ? "Expand left sidebar ([ or Ctrl+B)" : "Collapse left sidebar ([ or Ctrl+B)"}
+                >
+                  {isRailCollapsed ? (
+                    <PanelLeftOpen className="h-4 w-4" />
+                  ) : (
+                    <PanelLeft className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              )}
+
+              {/* Quick Compose when rail is collapsed */}
+              {isRailCollapsed && (
+                <button
+                  type="button"
+                  onClick={onOpenCompose}
+                  className="h-7 px-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1 font-medium shadow-sm transition-transform active:scale-95 cursor-pointer shrink-0"
+                  title="Compose Email (C)"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">New</span>
+                </button>
+              )}
+
+              {/* Account Switcher Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary/60 hover:bg-secondary px-2 py-1.5 rounded-md border border-border/50 max-w-[170px] truncate transition-colors outline-none cursor-pointer">
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{
+                      backgroundColor: selectedAccount?.colorCode || "#38bdf8",
+                    }}
+                  />
+                  <span className="truncate">
+                    {selectedAccount ? selectedAccount.emailAddress : "All Accounts"}
+                  </span>
+                  <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0 ml-auto" />
+                </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
                 className="w-64 bg-card border-border shadow-xl rounded-xl p-1"
@@ -509,6 +633,7 @@ export function MailSidebar({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
 
             {/* Actions: Sync Button & Unreads Switch */}
             <div className="flex items-center gap-1.5">
@@ -750,6 +875,40 @@ export function MailSidebar({
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
+
+        {/* Draggable Vertical Resize Handle */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize mail list sidebar"
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleDoubleClick}
+          className={cn(
+            "absolute -right-1.5 top-0 bottom-0 w-3 cursor-col-resize z-30 group flex items-center justify-center select-none",
+            isDragging && "cursor-col-resize pointer-events-auto"
+          )}
+          title="Drag to resize mail list, double-click to reset (340px)"
+        >
+          {/* Vertical line indicator */}
+          <div
+            className={cn(
+              "w-0.5 h-full transition-colors",
+              isDragging
+                ? "bg-sky-500 w-1 shadow-[0_0_10px_rgba(56,189,248,0.7)]"
+                : "bg-transparent group-hover:bg-sky-500/60 group-hover:w-0.5"
+            )}
+          />
+
+          {/* Grip pill visible on hover or active dragging */}
+          <div
+            className={cn(
+              "absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full bg-card border border-border/80 shadow-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none",
+              isDragging && "opacity-100 bg-sky-600 border-sky-400 text-white"
+            )}
+          >
+            <GripVertical className={cn("h-3 w-3", isDragging ? "text-white" : "text-muted-foreground")} />
+          </div>
+        </div>
       </Sidebar>
     </Sidebar>
   );

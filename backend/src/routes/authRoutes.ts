@@ -1,12 +1,86 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import prisma from '../db.js';
 import { generateToken, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 import { SyncService } from '../services/syncService.js';
 import { ProviderType } from '@prisma/client';
+import { authRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
+
+// In-memory store for single-use OAuth exchange codes (replaces exposing raw JWTs in GET URLs)
+interface ExchangeCodeData {
+  token: string;
+  user: { id: string; email: string; name: string };
+  expiresAt: number;
+}
+const exchangeCodes = new Map<string, ExchangeCodeData>();
+
+// Helper to generate RFC 6749 compliant HMAC-signed OAuth state parameter
+function generateOAuthState(provider: string): string {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const timestamp = Date.now().toString();
+  const payload = `${provider}:${nonce}:${timestamp}`;
+  const hmac = crypto.createHmac('sha256', process.env.JWT_SECRET || 'mailr_secret_key_default');
+  hmac.update(payload);
+  const signature = hmac.digest('hex');
+  return `${payload}:${signature}`;
+}
+
+// Helper to verify OAuth state parameter and prevent CSRF
+function verifyOAuthState(state: string | undefined, expectedProvider: string): boolean {
+  if (!state || typeof state !== 'string') return false;
+  const parts = state.split(':');
+  if (parts.length !== 4) return false;
+  const [provider, nonce, timestampStr, signature] = parts;
+  if (provider !== expectedProvider) return false;
+
+  const timestamp = parseInt(timestampStr, 10);
+  if (isNaN(timestamp) || Date.now() - timestamp > 10 * 60 * 1000) {
+    return false; // Expired after 10 minutes
+  }
+
+  const payload = `${provider}:${nonce}:${timestampStr}`;
+  const hmac = crypto.createHmac('sha256', process.env.JWT_SECRET || 'mailr_secret_key_default');
+  hmac.update(payload);
+  const expectedSig = hmac.digest('hex');
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+// 0. Single-use Code Exchange for OAuth callback
+router.post('/exchange-code', (req: Request, res: Response) => {
+  const { code } = req.body;
+  if (!code || typeof code !== 'string') {
+    res.status(400).json({ error: 'Exchange code is required' });
+    return;
+  }
+
+  const entry = exchangeCodes.get(code);
+  if (!entry) {
+    res.status(401).json({ error: 'Invalid or expired exchange code' });
+    return;
+  }
+
+  exchangeCodes.delete(code); // Enforce single-use
+
+  if (entry.expiresAt < Date.now()) {
+    res.status(401).json({ error: 'Exchange code has expired' });
+    return;
+  }
+
+  res.json({
+    success: true,
+    token: entry.token,
+    user: entry.user,
+  });
+});
 
 // 1. Google OAuth - Generate Authorization URL
 router.get('/google/url', (req: Request, res: Response) => {
@@ -31,6 +105,8 @@ router.get('/google/url', (req: Request, res: Response) => {
     'https://mail.google.com/',
   ].join(' ');
 
+  const state = generateOAuthState('google');
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -39,6 +115,7 @@ router.get('/google/url', (req: Request, res: Response) => {
     access_type: 'offline',
     prompt: 'consent',
     include_granted_scopes: 'true',
+    state,
   });
 
   const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -55,7 +132,7 @@ router.get('/google/url', (req: Request, res: Response) => {
 router.get('/google/callback', async (req: Request, res: Response) => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   try {
-    const { code, error } = req.query;
+    const { code, state, error } = req.query;
 
     if (error) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(String(error))}`);
@@ -64,6 +141,12 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 
     if (!code || typeof code !== 'string') {
       res.redirect(`${frontendUrl}/login?error=missing_auth_code`);
+      return;
+    }
+
+    // Verify OAuth CSRF state parameter
+    if (!verifyOAuthState(typeof state === 'string' ? state : undefined, 'google')) {
+      res.redirect(`${frontendUrl}/login?error=invalid_or_expired_oauth_state`);
       return;
     }
 
@@ -164,8 +247,15 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     });
 
     const jwtToken = generateToken({ id: user.id, email: user.email });
+    const authExchangeCode = crypto.randomBytes(24).toString('hex');
+    exchangeCodes.set(authExchangeCode, {
+      token: jwtToken,
+      user: { id: user.id, email: user.email, name: user.name || '' },
+      expiresAt: Date.now() + 60000,
+    });
+
     res.redirect(
-      `${frontendUrl}/app?token=${jwtToken}&email=${encodeURIComponent(
+      `${frontendUrl}/app?code=${authExchangeCode}&email=${encodeURIComponent(
         email
       )}&provider=GMAIL`
     );
@@ -200,6 +290,8 @@ router.get('/microsoft/url', (req: Request, res: Response) => {
     'https://graph.microsoft.com/Mail.Send',
   ].join(' ');
 
+  const state = generateOAuthState('microsoft');
+
   const params = new URLSearchParams({
     client_id: clientId,
     response_type: 'code',
@@ -207,6 +299,7 @@ router.get('/microsoft/url', (req: Request, res: Response) => {
     response_mode: 'query',
     scope,
     prompt: 'select_account',
+    state,
   });
 
   const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
@@ -223,7 +316,7 @@ router.get('/microsoft/url', (req: Request, res: Response) => {
 router.get('/microsoft/callback', async (req: Request, res: Response) => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   try {
-    const { code, error } = req.query;
+    const { code, state, error } = req.query;
 
     if (error) {
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(String(error))}`);
@@ -232,6 +325,12 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
 
     if (!code || typeof code !== 'string') {
       res.redirect(`${frontendUrl}/login?error=missing_auth_code`);
+      return;
+    }
+
+    // Verify OAuth CSRF state parameter
+    if (!verifyOAuthState(typeof state === 'string' ? state : undefined, 'microsoft')) {
+      res.redirect(`${frontendUrl}/login?error=invalid_or_expired_oauth_state`);
       return;
     }
 
@@ -327,8 +426,15 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
     });
 
     const jwtToken = generateToken({ id: user.id, email: user.email });
+    const authExchangeCode = crypto.randomBytes(24).toString('hex');
+    exchangeCodes.set(authExchangeCode, {
+      token: jwtToken,
+      user: { id: user.id, email: user.email, name: user.name || '' },
+      expiresAt: Date.now() + 60000,
+    });
+
     res.redirect(
-      `${frontendUrl}/app?token=${jwtToken}&email=${encodeURIComponent(
+      `${frontendUrl}/app?code=${authExchangeCode}&email=${encodeURIComponent(
         email
       )}&provider=OUTLOOK`
     );
@@ -338,8 +444,8 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
   }
 });
 
-// 5. Direct / Modal OAuth Login & Account Provisioning
-router.post('/oauth', async (req: Request, res: Response) => {
+// 5. Direct / Modal OAuth Login & Account Provisioning (Secured)
+router.post('/oauth', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { provider, email, name, accessToken, refreshToken } = req.body;
     if (!email || !provider) {
@@ -352,14 +458,69 @@ router.post('/oauth', async (req: Request, res: Response) => {
         ? ProviderType.GMAIL
         : ProviderType.OUTLOOK;
 
-    // 1. Find or create User
-    let user = await prisma.user.findUnique({ where: { email } });
+    let verifiedEmail = '';
+    let verifiedName = name;
+
+    // Verify token with identity provider if provided
+    if (accessToken) {
+      if (providerEnum === ProviderType.GMAIL) {
+        const verifyRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!verifyRes.ok) {
+          res.status(401).json({ error: 'OAuth verification failed: Invalid Google token' });
+          return;
+        }
+        const profile = (await verifyRes.json()) as any;
+        if (!profile.email || profile.email.toLowerCase() !== email.toLowerCase()) {
+          res.status(401).json({ error: 'OAuth verification failed: Token identity mismatch' });
+          return;
+        }
+        verifiedEmail = profile.email;
+        verifiedName = profile.name || verifiedName;
+      } else {
+        const verifyRes = await fetch('https://graph.microsoft.com/v1.0/me', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!verifyRes.ok) {
+          res.status(401).json({ error: 'OAuth verification failed: Invalid Microsoft token' });
+          return;
+        }
+        const profile = (await verifyRes.json()) as any;
+        const msEmail = (profile.mail || profile.userPrincipalName || '').toLowerCase();
+        if (!msEmail || msEmail !== email.toLowerCase()) {
+          res.status(401).json({ error: 'OAuth verification failed: Token identity mismatch' });
+          return;
+        }
+        verifiedEmail = msEmail;
+        verifiedName = profile.displayName || verifiedName;
+      }
+    } else {
+      // If no accessToken is provided:
+      if (process.env.NODE_ENV === 'production') {
+        res.status(401).json({ error: 'OAuth access token is required for authentication' });
+        return;
+      }
+
+      // In development: never allow claiming an existing registered user without credentials!
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        res.status(403).json({
+          error: 'Account already registered. Please log in with password or use verified OAuth.',
+        });
+        return;
+      }
+      verifiedEmail = email;
+    }
+
+    // 1. Find or create User with verified email
+    let user = await prisma.user.findUnique({ where: { email: verifiedEmail } });
     if (!user) {
       const randomPassword = (await bcrypt.hash(Math.random().toString(36) + Date.now(), 10));
       user = await prisma.user.create({
         data: {
-          email,
-          name: name || email.split('@')[0],
+          email: verifiedEmail,
+          name: verifiedName || verifiedEmail.split('@')[0],
           passwordHash: randomPassword,
         },
       });
@@ -374,12 +535,12 @@ router.post('/oauth', async (req: Request, res: Response) => {
       where: {
         userId_emailAddress: {
           userId: user.id,
-          emailAddress: email,
+          emailAddress: verifiedEmail,
         },
       },
       update: {
         provider: providerEnum,
-        displayName: name || email.split('@')[0],
+        displayName: verifiedName || verifiedEmail.split('@')[0],
         colorCode,
         encryptedAccessToken,
         encryptedRefreshToken,
@@ -389,8 +550,8 @@ router.post('/oauth', async (req: Request, res: Response) => {
       create: {
         userId: user.id,
         provider: providerEnum,
-        emailAddress: email,
-        displayName: name || email.split('@')[0],
+        emailAddress: verifiedEmail,
+        displayName: verifiedName || verifiedEmail.split('@')[0],
         colorCode,
         encryptedAccessToken,
         encryptedRefreshToken,
@@ -425,7 +586,7 @@ router.post('/oauth', async (req: Request, res: Response) => {
 });
 
 // Register new user
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, name } = req.body;
     if (!email || !password) {
@@ -464,7 +625,7 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // Login
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {

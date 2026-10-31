@@ -1,30 +1,80 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import prisma from '../db.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
-import { syncBroadcaster } from '../services/syncService.js';
+import { syncBroadcaster, SyncService } from '../services/syncService.js';
 import { AIService } from '../services/aiService.js';
 import { PriorityLevel } from '@prisma/client';
 
 const router = Router();
 
-// 1. Real-Time SSE Stream for Mailbox Updates (Must be authenticated or accept query token)
+// In-memory store for short-lived single-use SSE stream tickets (prevents passing primary JWTs in URLs)
+interface StreamTicketData {
+  userId: string;
+  expiresAt: number;
+}
+const streamTickets = new Map<string, StreamTicketData>();
+
+// Periodic cleanup of expired stream tickets
+setInterval(() => {
+  const now = Date.now();
+  for (const [ticket, data] of streamTickets.entries()) {
+    if (data.expiresAt < now) {
+      streamTickets.delete(ticket);
+    }
+  }
+}, 60000);
+
+// Request a short-lived single-use ticket for SSE streaming
+router.post('/stream/ticket', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const ticket = crypto.randomBytes(24).toString('hex');
+  streamTickets.set(ticket, {
+    userId: req.user.id,
+    expiresAt: Date.now() + 60000, // 60 seconds validity
+  });
+  res.json({ success: true, ticket });
+});
+
+// 1. Real-Time SSE Stream for Mailbox Updates
 router.get('/stream', async (req: AuthenticatedRequest, res: Response) => {
-  const token = req.query.token as string;
   let userId = '';
 
-  if (req.user?.id) {
-    userId = req.user.id;
-  } else if (token) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
+      const token = authHeader.split(' ')[1];
       const jwt = (await import('jsonwebtoken')).default;
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'mailr_secret_key_default') as { id: string };
+      userId = decoded.id;
+    } catch {
+      res.status(401).json({ error: 'Invalid authorization token' });
+      return;
+    }
+  } else if (req.query.ticket && typeof req.query.ticket === 'string') {
+    const ticketData = streamTickets.get(req.query.ticket);
+    if (!ticketData || ticketData.expiresAt < Date.now()) {
+      streamTickets.delete(req.query.ticket);
+      res.status(401).json({ error: 'Invalid or expired stream ticket' });
+      return;
+    }
+    streamTickets.delete(req.query.ticket); // Enforce single-use
+    userId = ticketData.userId;
+  } else if (req.query.token && typeof req.query.token === 'string') {
+    // Legacy fallback with validation
+    try {
+      const jwt = (await import('jsonwebtoken')).default;
+      const decoded = jwt.verify(req.query.token, process.env.JWT_SECRET || 'mailr_secret_key_default') as { id: string };
       userId = decoded.id;
     } catch {
       res.status(401).json({ error: 'Invalid stream token' });
       return;
     }
   } else {
-    res.status(401).json({ error: 'Auth required for live stream' });
+    res.status(401).json({ error: 'Authentication ticket or bearer token required for live stream' });
     return;
   }
 
@@ -55,8 +105,8 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
       limit = '100',
     } = req.query;
 
-    const pageNum = parseInt(page as string, 10) || 1;
-    let limitNum = parseInt(limit as string, 10) || 100;
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    let limitNum = Math.min(2000, Math.max(1, parseInt(limit as string, 10) || 100));
     if (limit === 'all') limitNum = 2000;
     const skip = (pageNum - 1) * limitNum;
 
@@ -79,10 +129,24 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
       whereCondition.isStarred = true;
     }
 
+    const now = new Date();
     if (folder === 'ARCHIVE') {
       whereCondition.isArchived = true;
+    } else if (folder === 'SNOOZED') {
+      whereCondition.isArchived = false;
+      whereCondition.snoozedUntil = { gt: now };
+    } else if (folder === 'SCHEDULED') {
+      whereCondition.messages = { some: { status: 'SCHEDULED' } };
     } else if (folder === 'INBOX') {
       whereCondition.isArchived = false;
+      whereCondition.AND = [
+        {
+          OR: [
+            { snoozedUntil: null },
+            { snoozedUntil: { lte: now } },
+          ],
+        },
+      ];
     }
 
     if (search && typeof search === 'string' && search.trim().length > 0) {
@@ -219,7 +283,8 @@ router.get(['/threads/:id', '/thread/:id'], async (req: AuthenticatedRequest, re
 router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const fromAccountId = req.body.fromAccountId || req.body.accountId;
-    const { to, cc, bcc, subject, bodyHtml, bodyText, attachments } = req.body;
+    const { to, cc, bcc, subject, bodyHtml, bodyText, attachments, scheduledAt } = req.body;
+    const isScheduled = Boolean(scheduledAt && new Date(scheduledAt).getTime() > Date.now());
 
     if (!fromAccountId || !to || !subject || (!bodyHtml && !bodyText)) {
       res.status(400).json({ error: 'Missing required email fields (fromAccountId, to, subject, body)' });
@@ -242,6 +307,44 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
     const priority = AIService.calculatePriority(subject, bodyText || bodyHtml || '', account.emailAddress);
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
+    // Dispatch real email via mail adapter (Gmail, Outlook, or SMTP) unless scheduled for later
+    let remoteMessageId = isScheduled ? `msg_sched_${Date.now()}` : `msg_sent_${Date.now()}`;
+    if (!isScheduled) {
+    try {
+      const adapter = await SyncService.getAdapterForAccount(account);
+      const sendResult = await adapter.sendMail({
+        from: account.displayName ? `"${account.displayName}" <${account.emailAddress}>` : account.emailAddress,
+        to: recipients,
+        cc: Array.isArray(cc) ? cc : cc ? [cc] : undefined,
+        bcc: Array.isArray(bcc) ? bcc : bcc ? [bcc] : undefined,
+        subject,
+        bodyHtml: bodyHtml || `<p>${bodyText}</p>`,
+        bodyText: bodyText || bodyHtml,
+        attachments: hasAttachments
+          ? attachments
+              .filter((att: any) => att.base64)
+              .map((att: any) => ({
+                filename: att.filename || 'attachment',
+                content: Buffer.from(att.base64, 'base64'),
+                contentType: att.contentType || 'application/octet-stream',
+              }))
+          : undefined,
+      });
+
+      if (sendResult?.messageId) {
+        remoteMessageId = sendResult.messageId;
+      }
+    } catch (dispatchErr: unknown) {
+      console.error(`[SendMail Error] Account ${account.emailAddress}:`, dispatchErr);
+      const dispatchMsg = dispatchErr instanceof Error ? dispatchErr.message : 'Unknown mail dispatch error';
+      if (process.env.NODE_ENV === 'production') {
+        res.status(502).json({ error: `Mail delivery failed: ${dispatchMsg}` });
+        return;
+      }
+      console.warn(`[SendMail Dev Notice] Outgoing mail simulated due to: ${dispatchMsg}`);
+    }
+    }
+
     // Create thread & message in database
     const thread = await prisma.thread.create({
       data: {
@@ -260,7 +363,7 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
       data: {
         threadId: thread.id,
         accountId: account.id,
-        remoteMessageId: `msg_sent_${Date.now()}`,
+        remoteMessageId,
         senderName: account.displayName,
         senderEmail: account.emailAddress,
         recipientList: recipients,
@@ -272,6 +375,8 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
         bodyText: bodyText || bodyHtml,
         isRead: true,
         hasAttachments,
+        status: isScheduled ? 'SCHEDULED' : 'SENT',
+        scheduledAt: isScheduled ? new Date(scheduledAt) : null,
         receivedAt: new Date(),
         attachments: hasAttachments
           ? {
@@ -388,6 +493,108 @@ router.post('/threads/:id/archive', async (req: AuthenticatedRequest, res: Respo
     res.json({ success: true, message: `Thread ${isArchived ? 'archived' : 'unarchived'}` });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Server error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+
+// 8. Snooze / Unsnooze Thread
+router.post(['/threads/:id/snooze', '/thread/:id/snooze'], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { snoozedUntil } = req.body;
+
+    const thread = await prisma.thread.findFirst({
+      where: { id, account: { userId: req.user!.id } },
+    });
+
+    if (!thread) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+
+    const updated = await prisma.thread.update({
+      where: { id },
+      data: {
+        snoozedUntil: snoozedUntil ? new Date(snoozedUntil) : null,
+      },
+    });
+
+    syncBroadcaster.notifyUser(req.user!.id, 'thread_snoozed', {
+      threadId: id,
+      snoozedUntil: updated.snoozedUntil?.toISOString() || null,
+    });
+
+    res.json({
+      success: true,
+      message: snoozedUntil
+        ? `Thread snoozed until ${new Date(snoozedUntil).toLocaleString()}`
+        : 'Thread unsnoozed',
+      thread: updated,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Snooze error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 9. 1-Click Newsletter Unsubscribe & Auto-Archive
+router.post(['/threads/:id/unsubscribe', '/thread/:id/unsubscribe'], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const thread = await prisma.thread.findFirst({
+      where: { id, account: { userId: req.user!.id } },
+      include: {
+        messages: {
+          orderBy: { receivedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!thread || thread.messages.length === 0) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+
+    const latestMessage = thread.messages[0];
+    let unsubscribeUrl: string | null = latestMessage.unsubscribeUrl || null;
+
+    // Detect unsubscribe link from HTML body if not already stored
+    if (!unsubscribeUrl && latestMessage.bodyHtml) {
+      const match = latestMessage.bodyHtml.match(/href=["'](https?:\/\/[^"']*(?:unsubscribe|optout|opt-out|preferences)[^"']*)["']/i);
+      if (match) {
+        unsubscribeUrl = match[1];
+      }
+    }
+
+    // Auto-archive thread & tag as newsletter
+    await prisma.thread.update({
+      where: { id },
+      data: { isArchived: true },
+    });
+
+    await prisma.message.updateMany({
+      where: { threadId: id },
+      data: { isArchived: true, isNewsletter: true },
+    });
+
+    syncBroadcaster.notifyUser(req.user!.id, 'thread_unsubscribed', {
+      threadId: id,
+      senderEmail: latestMessage.senderEmail,
+      unsubscribeUrl,
+    });
+
+    res.json({
+      success: true,
+      unsubscribeUrl,
+      message: unsubscribeUrl
+        ? 'Unsubscribe link detected and thread auto-archived.'
+        : 'Thread auto-archived and sender marked as newsletter.',
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unsubscribe error';
     res.status(500).json({ error: msg });
   }
 });
