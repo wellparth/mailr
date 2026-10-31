@@ -30,8 +30,11 @@ import {
   Bot,
   RefreshCw,
   Copy,
+  Share2,
+  Forward,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { apiFetch } from "@/lib/api";
@@ -126,6 +129,7 @@ interface MailDisplayProps {
   onOpenCompose: () => void;
   onOpenCopilot?: () => void;
   isCopilotOpen?: boolean;
+  onForward?: (forwardText: string, subject: string) => void;
 }
 
 export function MailDisplay({
@@ -140,10 +144,13 @@ export function MailDisplay({
   onOpenCompose,
   onOpenCopilot,
   isCopilotOpen = false,
+  onForward,
 }: MailDisplayProps) {
   const [replyText, setReplyText] = React.useState("");
   const [generatingTone, setGeneratingTone] = React.useState<string | null>(null);
   const [showSnoozeMenu, setShowSnoozeMenu] = React.useState(false);
+  const [customSnoozeInput, setCustomSnoozeInput] = React.useState("");
+  const [showShareMenu, setShowShareMenu] = React.useState(false);
   const [unsubscribing, setUnsubscribing] = React.useState(false);
   const [unsubscribed, setUnsubscribed] = React.useState(false);
   const [sendingReply, setSendingReply] = React.useState(false);
@@ -395,6 +402,46 @@ export function MailDisplay({
     }
   };
 
+  const handleForward = () => {
+    if (!thread || !latestMessage) return;
+    setShowShareMenu(false);
+    const fwdSubject = thread.subject.startsWith("Fwd:") ? thread.subject : `Fwd: ${thread.subject}`;
+    const fwdBody = `\n\n---------- Forwarded message ---------\nFrom: ${latestMessage.senderName || latestMessage.senderEmail} <${latestMessage.senderEmail}>\nDate: ${new Date(latestMessage.receivedAt).toLocaleString()}\nSubject: ${thread.subject}\nTo: ${latestMessage.recipientList.join(", ")}\n\n${latestMessage.bodyText || latestMessage.snippet || ""}`;
+    if (onForward) {
+      onForward(fwdBody, fwdSubject);
+    } else {
+      onOpenCompose();
+    }
+  };
+
+  const handleCopyFormattedEmail = async () => {
+    if (!thread || !latestMessage) return;
+    setShowShareMenu(false);
+    const text = `Subject: ${thread.subject}\nFrom: ${latestMessage.senderName || latestMessage.senderEmail} <${latestMessage.senderEmail}>\nDate: ${new Date(latestMessage.receivedAt).toLocaleString()}\nTo: ${latestMessage.recipientList.join(", ")}\n\n${latestMessage.bodyText || latestMessage.snippet || ""}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setActionNotice("Formatted email text copied to clipboard!");
+      setTimeout(() => setActionNotice(null), 3500);
+    } catch {
+      alert("Failed to copy email to clipboard.");
+    }
+  };
+
+  const handleSystemShare = async () => {
+    if (!thread || !latestMessage) return;
+    setShowShareMenu(false);
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: thread.subject,
+          text: `Email from ${latestMessage.senderName || latestMessage.senderEmail}:\n\n${latestMessage.bodyText || latestMessage.snippet || ""}`,
+        });
+      } catch {
+        // User cancelled share dialog
+      }
+    }
+  };
+
   const handleUnsubscribe = async () => {
     if (!thread || unsubscribing) return;
     setUnsubscribing(true);
@@ -574,16 +621,16 @@ export function MailDisplay({
             </Button>
 
             {showSnoozeMenu && (
-              <div className="absolute right-0 top-full mt-1.5 w-52 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs space-y-1">
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">
-                  Snooze Until
+              <div className="absolute right-0 top-full mt-1.5 w-64 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-2 z-50 text-xs space-y-1.5">
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-0.5">
+                  Snooze Presets
                 </div>
                 <button
                   onClick={() => {
                     const d = new Date(Date.now() + 4 * 60 * 60 * 1000);
                     handleSnoozeSelect(d.toISOString());
                   }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 transition-colors"
                 >
                   Later Today (+4 hours)
                 </button>
@@ -594,7 +641,7 @@ export function MailDisplay({
                     d.setHours(9, 0, 0, 0);
                     handleSnoozeSelect(d.toISOString());
                   }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 transition-colors"
                 >
                   Tomorrow Morning (9:00 AM)
                 </button>
@@ -607,7 +654,7 @@ export function MailDisplay({
                     d.setHours(9, 0, 0, 0);
                     handleSnoozeSelect(d.toISOString());
                   }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 transition-colors"
                 >
                   This Weekend (Saturday 9:00 AM)
                 </button>
@@ -620,10 +667,97 @@ export function MailDisplay({
                     d.setHours(9, 0, 0, 0);
                     handleSnoozeSelect(d.toISOString());
                   }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 transition-colors"
                 >
                   Next Week (Monday 9:00 AM)
                 </button>
+
+                {/* Manual Custom Date & Time Snooze */}
+                <div className="border-t border-slate-800 pt-2 px-1">
+                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-sky-400" />
+                    <span>Custom Date & Time</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Input
+                      type="datetime-local"
+                      value={customSnoozeInput}
+                      onChange={(e) => setCustomSnoozeInput(e.target.value)}
+                      min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                      className="h-8 text-xs bg-slate-800/90 border-slate-700 text-slate-100 px-2"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!customSnoozeInput}
+                      onClick={() => {
+                        if (!customSnoozeInput) return;
+                        const targetDate = new Date(customSnoozeInput);
+                        if (isNaN(targetDate.getTime()) || targetDate.getTime() <= Date.now()) {
+                          alert("Please choose a future date and time to snooze.");
+                          return;
+                        }
+                        handleSnoozeSelect(targetDate.toISOString());
+                      }}
+                      className="w-full h-7 text-[11px] bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
+                    >
+                      Snooze to Selected Time
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-800 pt-1">
+                  <button
+                    onClick={() => handleSnoozeSelect(null)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    Unsnooze (Return to Inbox)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Share & Forward Menu */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowShareMenu((prev) => !prev)}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+              title="Share or forward email"
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+
+            {showShareMenu && (
+              <div className="absolute right-0 top-full mt-1.5 w-56 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs space-y-1">
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">
+                  Share & Forward
+                </div>
+                <button
+                  onClick={handleForward}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Forward className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Forward via Mailr</span>
+                </button>
+                <button
+                  onClick={handleCopyFormattedEmail}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Copy Formatted Mail</span>
+                </button>
+                {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+                  <button
+                    onClick={handleSystemShare}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Share via System...</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

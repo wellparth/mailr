@@ -221,23 +221,28 @@ router.post('/calendar/integrations', async (req: AuthenticatedRequest, res: Res
   }
 });
 
-// 9. BYOK: Get user AI provider & whether key is configured
+// 9. BYOK: Get user AI provider, model & whether key is configured
 router.get('/byok', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
-      select: { aiProvider: true, encryptedAiKey: true },
+      select: { aiProvider: true, aiModel: true, encryptedAiKey: true },
     });
 
+    const provider = user?.aiProvider || (process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai');
+    const defaultModel = provider === 'nvidia' ? (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-bolt-e4b') : 'gpt-4o-mini';
+    const model = user?.aiModel || defaultModel;
+
     res.json({
-      provider: user?.aiProvider || (process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai'),
+      provider,
+      model,
       hasCustomKey: Boolean(user?.encryptedAiKey && user.encryptedAiKey.length > 0),
       serverHasKey: Boolean(process.env.NVIDIA_API_KEY),
       supportedProviders: [
-        { id: 'nvidia', name: 'NVIDIA NIM (Nemotron 3.5 Bolt - Free)', placeholder: 'nvapi-...' },
-        { id: 'openai', name: 'OpenAI (GPT-4o, GPT-4o-mini)', placeholder: 'sk-proj-...' },
-        { id: 'claude', name: 'Anthropic Claude (3.5 Sonnet, 3.5 Haiku)', placeholder: 'sk-ant-api03-...' },
-        { id: 'google', name: 'Google Gemini (1.5 Flash, 1.5 Pro)', placeholder: 'AIzaSy...' },
+        { id: 'nvidia', name: 'NVIDIA NIM (Free Cloud Models)', placeholder: 'nvapi-...' },
+        { id: 'openai', name: 'OpenAI (GPT-4o, o1, o3-mini)', placeholder: 'sk-proj-...' },
+        { id: 'claude', name: 'Anthropic Claude (3.7 Sonnet, 3.5 Haiku)', placeholder: 'sk-ant-api03-...' },
+        { id: 'google', name: 'Google Gemini (1.5 Flash, 2.0 Flash)', placeholder: 'AIzaSy...' },
       ],
     });
   } catch (err: unknown) {
@@ -246,8 +251,35 @@ router.get('/byok', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 10. BYOK: Save user's custom API key (AES-256-GCM encrypted)
-router.post('/byok', async (req: AuthenticatedRequest, res: Response) => {
+// 10. Fetch active AI models list dynamically for a provider
+router.get('/models', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const providerParam = (req.query.provider as string) || 'nvidia';
+    const provider = ['openai', 'claude', 'google', 'nvidia'].includes(providerParam.toLowerCase())
+      ? (providerParam.toLowerCase() as AIProvider)
+      : 'nvidia';
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { encryptedAiKey: true },
+    });
+
+    const userKey = user?.encryptedAiKey ? decryptSecret(user.encryptedAiKey) : undefined;
+    const models = await LLMClient.fetchActiveModels(provider, userKey);
+
+    res.json({
+      success: true,
+      provider,
+      models,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Models fetch error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// 11. Fetch active AI models with custom key before saving
+router.post('/models', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { provider, apiKey } = req.body;
     if (!provider || !['openai', 'claude', 'google', 'nvidia'].includes(provider.toLowerCase())) {
@@ -255,21 +287,55 @@ router.post('/byok', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    const encryptedAiKey = apiKey && apiKey.trim().length > 0 ? encryptSecret(apiKey.trim()) : null;
+    const models = await LLMClient.fetchActiveModels(provider.toLowerCase() as AIProvider, apiKey);
+    res.json({
+      success: true,
+      provider: provider.toLowerCase(),
+      models,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Models fetch error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// 12. BYOK: Save user's custom API key & model choice (AES-256-GCM encrypted)
+router.post('/byok', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { provider, apiKey, model } = req.body;
+    if (!provider || !['openai', 'claude', 'google', 'nvidia'].includes(provider.toLowerCase())) {
+      res.status(400).json({ error: 'Valid provider is required (openai, claude, google, nvidia).' });
+      return;
+    }
+
+    const updateData: Record<string, any> = {
+      aiProvider: provider.toLowerCase(),
+    };
+
+    if (model && typeof model === 'string' && model.trim().length > 0) {
+      updateData.aiModel = model.trim();
+    }
+
+    if (apiKey !== undefined) {
+      if (apiKey && apiKey.trim().length > 0) {
+        updateData.encryptedAiKey = encryptSecret(apiKey.trim());
+      } else if (apiKey === '') {
+        // User explicitly cleared key
+        updateData.encryptedAiKey = null;
+      }
+    }
 
     await prisma.user.update({
       where: { id: req.user!.id },
-      data: {
-        aiProvider: provider.toLowerCase(),
-        encryptedAiKey,
-      },
+      data: updateData,
     });
 
     res.json({
       success: true,
-      message: `AI credentials updated for ${provider.toUpperCase()}.`,
+      message: `AI credentials and model updated for ${provider.toUpperCase()}${model ? ` (${model})` : ''}.`,
       provider: provider.toLowerCase(),
-      hasCustomKey: Boolean(encryptedAiKey),
+      model: updateData.aiModel,
+      hasCustomKey: Boolean(updateData.encryptedAiKey),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'BYOK save error';
@@ -277,7 +343,7 @@ router.post('/byok', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 11. BYOK: Test API key before saving
+// 13. BYOK: Test API key before saving
 router.post('/byok/test', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { provider, apiKey, model } = req.body;
@@ -294,8 +360,32 @@ router.post('/byok/test', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// 14. Promotional & Spam Email Classification endpoint
+router.get('/emails/classified', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const category = (req.query.category as any) || 'all';
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    const result = await AgentService.toolDetectAndClassifyEmails(req.user!.id, { category, limit });
+    res.json({ success: true, ...result });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Email classification error';
+    res.status(500).json({ error: msg });
+  }
+});
 
-// 12. Daily Executive Morning Briefing
+// 15. Batch Clean Promotional / Spam / Unnecessary Emails
+router.post('/emails/batch-clean', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { categories, action } = req.body;
+    const result = await AgentService.toolBatchCleanUnnecessaryEmails(req.user!.id, { categories, action });
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Batch clean error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 16. Daily Executive Morning Briefing
 router.get('/briefing', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const briefing = await AgentService.getMorningBriefing(req.user!.id);

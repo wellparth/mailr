@@ -24,8 +24,13 @@ import {
   AlertTriangle,
   Search,
   Wrench,
+  Clock,
+  ShieldAlert,
+  Trash2,
+  Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -56,6 +61,7 @@ interface ChatMessage {
     | "EMAIL_COMPOSED"
     | "EMAILS_FOUND"
     | "CALENDAR_ALIGNED"
+    | "EMAILS_CLASSIFIED"
     | "GENERAL_REPLY";
   actionPayload?: any;
   toolSteps?: ToolStep[];
@@ -94,7 +100,8 @@ export function AICopilotDrawer({
   const [input, setInput] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
-  const [byokInfo, setByokInfo] = React.useState<{ provider: string; hasCustomKey: boolean } | null>(null);
+  const [byokInfo, setByokInfo] = React.useState<{ provider: string; model?: string; hasCustomKey: boolean } | null>(null);
+  const [cleaningCategory, setCleaningCategory] = React.useState<string | null>(null);
 
   // Resizable width state (persisted in localStorage)
   const [copilotWidth, setCopilotWidth] = React.useState<number>(380);
@@ -199,9 +206,17 @@ export function AICopilotDrawer({
   }, [open, activeThread?.id]);
 
   const [sendingCardId, setSendingCardId] = React.useState<string | null>(null);
+  const isSendingDraftRef = React.useRef<boolean>(false);
+  const [editingMeetingMsgId, setEditingMeetingMsgId] = React.useState<string | null>(null);
+  const [customMeetingTime, setCustomMeetingTime] = React.useState<string>("");
+  const [customDuration, setCustomDuration] = React.useState<number>(30);
+  const [showCustomSlotInput, setShowCustomSlotInput] = React.useState<boolean>(false);
+  const [manualSlotInput, setManualSlotInput] = React.useState<string>("");
 
   const handleSendDraftNow = async (draftData: any, msgId: string) => {
+    if (isSendingDraftRef.current || sendingCardId !== null) return;
     try {
+      isSendingDraftRef.current = true;
       setSendingCardId(msgId);
       const recipient = draftData.recipientEmail || draftData.to;
       const subject = draftData.subject || "No Subject";
@@ -239,8 +254,48 @@ export function AICopilotDrawer({
     } catch (err: any) {
       alert("Failed to dispatch email: " + (err.message || "Unknown error"));
     } finally {
+      isSendingDraftRef.current = false;
       setSendingCardId(null);
     }
+  };
+
+  const handleSaveManualMeeting = (msgId: string, oldMeeting: any) => {
+    if (!customMeetingTime) return;
+    const newStart = new Date(customMeetingTime);
+    if (isNaN(newStart.getTime()) || newStart.getTime() <= Date.now()) {
+      alert("Please choose a valid future date and time.");
+      return;
+    }
+    const newEnd = new Date(newStart.getTime() + customDuration * 60 * 1000);
+    const formatUrlDate = (date: Date) => date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    const startIso = formatUrlDate(newStart);
+    const endIso = formatUrlDate(newEnd);
+    const encodedTitle = encodeURIComponent(oldMeeting.title || "Meeting");
+    const encodedDesc = encodeURIComponent(oldMeeting.description || "");
+
+    const updatedMeeting = {
+      ...oldMeeting,
+      startTime: newStart.toISOString(),
+      endTime: newEnd.toISOString(),
+      googleCalendarUrl: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodedTitle}&dates=${startIso}/${endIso}&details=${encodedDesc}`,
+      outlookCalendarUrl: `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodedTitle}&body=${encodedDesc}&startdt=${encodeURIComponent(newStart.toISOString())}&enddt=${encodeURIComponent(newEnd.toISOString())}`,
+      hasConflict: false,
+    };
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? {
+              ...m,
+              actionPayload: {
+                ...m.actionPayload,
+                meeting: updatedMeeting,
+              },
+            }
+          : m
+      )
+    );
+    setEditingMeetingMsgId(null);
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -286,6 +341,39 @@ export function AICopilotDrawer({
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBatchClean = async (category: string, action: "archive" | "trash" | "mark_read") => {
+    try {
+      setCleaningCategory(category);
+      const res = await apiFetch("/api/agent/emails/batch-clean", {
+        method: "POST",
+        body: JSON.stringify({ category, action }),
+      });
+      if (res && res.success) {
+        const actionVerb = action === "trash" ? "moved to trash" : action === "archive" ? "archived" : "marked as read";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `clean_${Date.now()}`,
+            role: "assistant",
+            content: `✨ Successfully ${actionVerb} ${res.count} ${category.replace("_", " ")} email(s). Your inbox has been updated!`,
+            toolSteps: [
+              {
+                tool: "batch_clean_unnecessary_emails",
+                summary: `${action.toUpperCase()} operation applied to ${res.count} email(s)`,
+                status: "completed",
+              },
+            ],
+          },
+        ]);
+        onEmailSent?.();
+      }
+    } catch (err: any) {
+      alert("Failed to batch clean emails: " + (err.message || "Unknown error"));
+    } finally {
+      setCleaningCategory(null);
     }
   };
 
@@ -349,12 +437,22 @@ export function AICopilotDrawer({
             <Sparkles className="h-4 w-4" />
           </div>
           <div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-sm font-semibold text-foreground">Mailr Copilot</span>
               {byokInfo && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase border-border/80 text-muted-foreground">
-                  {byokInfo.provider}
-                </Badge>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase border-border/80 text-muted-foreground">
+                    {byokInfo.provider}
+                  </Badge>
+                  {byokInfo.model && (
+                    <span
+                      className="text-[9px] text-muted-foreground font-mono truncate max-w-[130px] border border-border/50 px-1 py-0 rounded bg-secondary/50"
+                      title={`Active Model: ${byokInfo.model}`}
+                    >
+                      {byokInfo.model.split("/").pop()}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             <p className="text-[11px] text-muted-foreground truncate max-w-[220px]">
@@ -390,6 +488,15 @@ export function AICopilotDrawer({
       <div className="p-2.5 bg-secondary/30 border-b border-border/50 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar">
         {activeThread ? (
           <>
+            <button
+              onClick={() => handleSendMessage("Check if this email is promotional, spam, or unnecessary")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-[11px] font-medium border border-purple-500/30 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <ShieldAlert className="h-3 w-3 text-purple-400" />
+              <span>Check Spam/Promo</span>
+            </button>
+
             <button
               onClick={() => handleSendMessage("Summarize this thread and generate executive notes with action items")}
               disabled={loading}
@@ -428,6 +535,15 @@ export function AICopilotDrawer({
           </>
         ) : (
           <>
+            <button
+              onClick={() => handleSendMessage("Detect and distinguish promotional, spam, and unnecessary emails in my inbox")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-[11px] font-medium border border-purple-500/30 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <ShieldAlert className="h-3 w-3 text-purple-400" />
+              <span>Clean Promo & Spam</span>
+            </button>
+
             <button
               onClick={() => handleSendMessage("Read all my unread emails and check my calendar to align everything and write a draft")}
               disabled={loading}
@@ -608,7 +724,7 @@ export function AICopilotDrawer({
 
                         <Button
                           size="sm"
-                          disabled={sendingCardId === msg.id}
+                          disabled={sendingCardId === msg.id || isSendingDraftRef.current}
                           onClick={() => handleSendDraftNow(msg.actionPayload.draftResult, msg.id)}
                           className="w-full text-xs bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5 h-8 cursor-pointer shadow-sm"
                         >
@@ -684,6 +800,70 @@ export function AICopilotDrawer({
                           <Download className="h-3 w-3" />
                           <span>Download .ics Calendar File</span>
                         </a>
+
+                        {/* Manual Date & Time Adjustment Option */}
+                        <div className="pt-1.5 border-t border-border/40">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (editingMeetingMsgId === msg.id) {
+                                setEditingMeetingMsgId(null);
+                              } else {
+                                setEditingMeetingMsgId(msg.id);
+                                const st = new Date(msg.actionPayload.meeting.startTime);
+                                setCustomMeetingTime(!isNaN(st.getTime()) ? st.toISOString().slice(0, 16) : "");
+                              }
+                            }}
+                            className="text-[10px] text-emerald-400 hover:text-emerald-300 underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Clock className="w-3 h-3" />
+                            <span>{editingMeetingMsgId === msg.id ? "Close Custom Schedule" : "Adjust Date & Time manually"}</span>
+                          </button>
+
+                          {editingMeetingMsgId === msg.id && (
+                            <div className="mt-2 p-2.5 bg-background/80 border border-emerald-500/40 rounded-lg space-y-2 text-xs">
+                              <div className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">
+                                Custom Meeting Date & Time
+                              </div>
+                              <div className="space-y-1.5">
+                                <Input
+                                  type="datetime-local"
+                                  value={customMeetingTime}
+                                  onChange={(e) => setCustomMeetingTime(e.target.value)}
+                                  min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                                  className="h-7 text-xs bg-secondary/80 border-border text-foreground px-2"
+                                />
+                                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  <span>Duration:</span>
+                                  {[15, 30, 45, 60].map((mins) => (
+                                    <button
+                                      key={mins}
+                                      type="button"
+                                      onClick={() => setCustomDuration(mins)}
+                                      className={cn(
+                                        "px-1.5 py-0.5 rounded text-[10px] border transition-colors",
+                                        customDuration === mins
+                                          ? "bg-emerald-600 border-emerald-500 text-white"
+                                          : "bg-secondary border-border text-muted-foreground hover:text-foreground"
+                                      )}
+                                    >
+                                      {mins}m
+                                    </button>
+                                  ))}
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={!customMeetingTime}
+                                  onClick={() => handleSaveManualMeeting(msg.id, msg.actionPayload.meeting)}
+                                  className="w-full h-7 text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                                >
+                                  Update Meeting Schedule
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -711,7 +891,47 @@ export function AICopilotDrawer({
                                   {slot.label}
                                 </button>
                               ))}
+                              <button
+                                type="button"
+                                onClick={() => setShowCustomSlotInput((prev) => !prev)}
+                                className="px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-[10px] transition-colors cursor-pointer"
+                              >
+                                + Custom Time
+                              </button>
                             </div>
+
+                            {showCustomSlotInput && (
+                              <div className="mt-2 p-2 rounded-lg bg-background/80 border border-sky-500/30 space-y-1.5">
+                                <div className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider">
+                                  Pick Custom Meeting Time
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <Input
+                                    type="datetime-local"
+                                    value={manualSlotInput}
+                                    onChange={(e) => setManualSlotInput(e.target.value)}
+                                    min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                                    className="h-7 text-xs bg-secondary/80 border-border text-foreground px-2"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={!manualSlotInput}
+                                    onClick={() => {
+                                      if (!manualSlotInput) return;
+                                      const dt = new Date(manualSlotInput);
+                                      if (isNaN(dt.getTime())) return;
+                                      handleSendMessage(`Schedule a meeting on ${dt.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`);
+                                      setShowCustomSlotInput(false);
+                                      setManualSlotInput("");
+                                    }}
+                                    className="h-7 text-[11px] bg-sky-600 hover:bg-sky-500 text-white cursor-pointer px-2"
+                                  >
+                                    Schedule
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -768,6 +988,168 @@ export function AICopilotDrawer({
                     <p className="text-[11px] text-muted-foreground">
                       Successfully processed {msg.actionPayload.triageRes.affectedCount} conversation(s) according to your rules.
                     </p>
+                  </div>
+                )}
+
+                {/* 6. Interactive Card: Email Classification (Spam / Promotional / Unnecessary) */}
+                {msg.actionType === "EMAILS_CLASSIFIED" && msg.actionPayload?.classifiedEmails && (
+                  <div className="p-3 bg-secondary/40 border border-purple-500/30 rounded-xl space-y-3 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center justify-between font-semibold text-purple-400">
+                      <span className="flex items-center gap-1.5">
+                        <ShieldAlert className="h-3.5 w-3.5" />
+                        Inbox Categorization & Clean-up
+                      </span>
+                      <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/40">
+                        {msg.actionPayload.classifiedEmails.totalScanned} Scanned
+                      </Badge>
+                    </div>
+
+                    {/* Breakdown Badges */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 pt-0.5">
+                      <div className="p-1.5 rounded-lg bg-background/50 border border-border/50 flex flex-col">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                          Promotional
+                        </span>
+                        <span className="text-xs font-bold text-foreground">
+                          {msg.actionPayload.classifiedEmails.breakdown.promotional}
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-background/50 border border-border/50 flex flex-col">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                          Spam / Junk
+                        </span>
+                        <span className="text-xs font-bold text-rose-400">
+                          {msg.actionPayload.classifiedEmails.breakdown.spam}
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-background/50 border border-border/50 flex flex-col">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                          Newsletters
+                        </span>
+                        <span className="text-xs font-bold text-foreground">
+                          {msg.actionPayload.classifiedEmails.breakdown.newsletter}
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-background/50 border border-border/50 flex flex-col">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                          Notifications
+                        </span>
+                        <span className="text-xs font-bold text-foreground">
+                          {msg.actionPayload.classifiedEmails.breakdown.notification}
+                        </span>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-background/50 border border-border/50 flex flex-col col-span-2 sm:col-span-1">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          Primary Mails
+                        </span>
+                        <span className="text-xs font-bold text-emerald-400">
+                          {msg.actionPayload.classifiedEmails.breakdown.primary}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Detected Unnecessary Mails List */}
+                    {msg.actionPayload.classifiedEmails.unnecessaryEmails?.length > 0 && (
+                      <div className="space-y-1.5 pt-1 border-t border-border/40">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-medium text-foreground">
+                            Filtered Candidates ({msg.actionPayload.classifiedEmails.unnecessaryEmails.length}):
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Click to inspect</span>
+                        </div>
+                        <div className="divide-y divide-border/30 max-h-40 overflow-y-auto space-y-1 pr-1">
+                          {msg.actionPayload.classifiedEmails.unnecessaryEmails.slice(0, 8).map((email: any, idx: number) => {
+                            const catColor =
+                              email.category === "SPAM"
+                                ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                                : email.category === "PROMOTIONAL"
+                                ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                : email.category === "NEWSLETTER"
+                                ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
+                                : "bg-sky-500/10 text-sky-300 border-sky-500/30";
+
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() => onSelectThread?.(email.threadId)}
+                                className={cn(
+                                  "py-1.5 px-1.5 rounded hover:bg-secondary/60 transition-colors",
+                                  onSelectThread && "cursor-pointer group"
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-medium text-foreground truncate max-w-[150px] group-hover:text-purple-300">
+                                    {email.sender}
+                                  </span>
+                                  <span className={`text-[9px] px-1.5 py-0.2 rounded border font-medium uppercase ${catColor}`}>
+                                    {email.category}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground truncate">{email.subject}</p>
+                                {email.signals && email.signals.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-0.5">
+                                    {email.signals.slice(0, 2).map((sig: string, sI: number) => (
+                                      <span key={sI} className="text-[8px] px-1 py-0 rounded bg-secondary text-muted-foreground">
+                                        {sig}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 1-Click Clean-up Actions */}
+                    <div className="space-y-1.5 pt-2 border-t border-border/40">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        1-Click Clean Actions:
+                      </span>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={cleaningCategory !== null || msg.actionPayload.classifiedEmails.breakdown.promotional === 0}
+                          onClick={() => handleBatchClean("promotional", "archive")}
+                          className="h-7 text-[10px] gap-1 border-amber-500/30 text-amber-300 hover:bg-amber-500/10 cursor-pointer"
+                        >
+                          <Archive className="h-3 w-3" />
+                          <span>Archive Promo ({msg.actionPayload.classifiedEmails.breakdown.promotional})</span>
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={cleaningCategory !== null || msg.actionPayload.classifiedEmails.breakdown.spam === 0}
+                          onClick={() => handleBatchClean("spam", "trash")}
+                          className="h-7 text-[10px] gap-1 border-rose-500/30 text-rose-300 hover:bg-rose-500/10 cursor-pointer"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Trash Spam ({msg.actionPayload.classifiedEmails.breakdown.spam})</span>
+                        </Button>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        disabled={cleaningCategory !== null || msg.actionPayload.classifiedEmails.breakdown.unnecessaryTotal === 0}
+                        onClick={() => handleBatchClean("all_unnecessary", "archive")}
+                        className="w-full h-7 text-[10px] bg-purple-600 hover:bg-purple-500 text-white gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>
+                          {cleaningCategory === "all_unnecessary"
+                            ? "Cleaning Inbox..."
+                            : `Archive All ${msg.actionPayload.classifiedEmails.breakdown.unnecessaryTotal} Unnecessary Emails`}
+                        </span>
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>

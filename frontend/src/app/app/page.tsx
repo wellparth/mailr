@@ -686,7 +686,22 @@ export default function AppMailPage() {
         return;
       }
 
-      // 3. Single-Key Hotkeys
+      // 4. Any remaining hotkeys are STRICTLY single-key hotkeys.
+      // If any modifier key (Ctrl, Meta/Cmd, Alt) is pressed, DO NOT trigger single-key hotkeys.
+      // This ensures standard system shortcuts like Ctrl+C / Cmd+C (copy), Ctrl+V (paste), Ctrl+X (cut),
+      // Ctrl+A (select all), Ctrl+Z (undo), Ctrl+R (refresh) work completely untouched.
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
+      // Check if user has text selected in the document.
+      // If text is selected anywhere, pressing 'c' must NOT open composer so user can freely copy.
+      const selectedText = window.getSelection()?.toString();
+      if (selectedText && selectedText.length > 0) {
+        return;
+      }
+
+      // 5. Standalone Single-Key Hotkeys
       if (e.key === "?") {
         e.preventDefault();
         setIsShortcutsOpen((prev) => !prev);
@@ -830,6 +845,14 @@ export default function AppMailPage() {
             onOpenCopilot={() => setIsCopilotOpen((prev) => !prev)}
             isCopilotOpen={isCopilotOpen}
             onSnooze={handleSnooze}
+            onForward={(forwardText, subject) => {
+              setComposerPrefill({
+                draftText: forwardText,
+                subject,
+                to: "",
+              });
+              setIsComposeOpen(true);
+            }}
           />
         </div>
 

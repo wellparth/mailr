@@ -26,6 +26,7 @@ import {
   Cpu,
   Bot,
   Link as LinkIcon,
+  RefreshCw,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -33,6 +34,14 @@ interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accountsCount: number;
+}
+
+export interface AIModelItem {
+  id: string;
+  name: string;
+  provider: string;
+  description?: string;
+  isRecommended?: boolean;
 }
 
 export function SettingsDialog({
@@ -44,6 +53,11 @@ export function SettingsDialog({
 
   // AI & BYOK State
   const [aiProvider, setAiProvider] = React.useState<"openai" | "claude" | "google" | "nvidia">("nvidia");
+  const [aiModel, setAiModel] = React.useState<string>("");
+  const [availableModels, setAvailableModels] = React.useState<AIModelItem[]>([]);
+  const [loadingModels, setLoadingModels] = React.useState(false);
+  const [isCustomModel, setIsCustomModel] = React.useState(false);
+  const [customModelInput, setCustomModelInput] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [showKey, setShowKey] = React.useState(false);
   const [hasCustomKey, setHasCustomKey] = React.useState(false);
@@ -64,6 +78,29 @@ export function SettingsDialog({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  // Dynamically fetch active model list for provider
+  const loadModels = React.useCallback(async (provider: string, customApiKey?: string) => {
+    try {
+      setLoadingModels(true);
+      let res: any;
+      if (customApiKey && customApiKey.trim().length > 0) {
+        res = await apiFetch("/api/agent/models", {
+          method: "POST",
+          body: JSON.stringify({ provider, apiKey: customApiKey.trim() }),
+        });
+      } else {
+        res = await apiFetch(`/api/agent/models?provider=${provider}`);
+      }
+      if (res && res.models && res.models.length > 0) {
+        setAvailableModels(res.models);
+      }
+    } catch (err) {
+      console.warn("Failed to load models list", err);
+    } finally {
+      setLoadingModels(false);
+    }
+  }, []);
+
   // Load existing configuration on open
   React.useEffect(() => {
     if (open) {
@@ -71,8 +108,13 @@ export function SettingsDialog({
       apiFetch("/api/agent/byok")
         .then((res) => {
           if (res) {
-            if (res.provider) setAiProvider(res.provider);
+            const prov = res.provider || "nvidia";
+            setAiProvider(prov);
+            if (res.model) {
+              setAiModel(res.model);
+            }
             setHasCustomKey(Boolean(res.hasCustomKey));
+            loadModels(prov);
           }
         })
         .catch(() => {});
@@ -91,11 +133,18 @@ export function SettingsDialog({
 
       setTestResult(null);
     }
-  }, [open]);
+  }, [open, loadModels]);
+
+  const handleSelectProvider = (prov: "openai" | "claude" | "google" | "nvidia") => {
+    setAiProvider(prov);
+    setTestResult(null);
+    setIsCustomModel(false);
+    loadModels(prov, apiKey);
+  };
 
   // Test API Key
   const handleTestApiKey = async () => {
-    if (!apiKey.trim()) {
+    if (!apiKey.trim() && !hasCustomKey) {
       setTestResult({ success: false, message: "Please enter an API key to test." });
       return;
     }
@@ -108,6 +157,7 @@ export function SettingsDialog({
         body: JSON.stringify({
           provider: aiProvider,
           apiKey: apiKey.trim(),
+          model: (isCustomModel ? customModelInput : aiModel) || undefined,
         }),
       });
 
@@ -123,22 +173,24 @@ export function SettingsDialog({
     }
   };
 
-  // Save BYOK credentials
+  // Save BYOK credentials & model selection
   const handleSaveAIConfig = async () => {
     try {
       setSavingAI(true);
+      const chosenModel = isCustomModel ? customModelInput.trim() : aiModel.trim();
       const res = await apiFetch("/api/agent/byok", {
         method: "POST",
         body: JSON.stringify({
           provider: aiProvider,
-          apiKey: apiKey.trim(),
+          apiKey: apiKey.trim() ? apiKey.trim() : undefined,
+          model: chosenModel || undefined,
         }),
       });
 
       if (res && res.success) {
         setHasCustomKey(Boolean(res.hasCustomKey));
         setApiKey("");
-        showToast(`AI settings saved. Provider: ${aiProvider.toUpperCase()}`);
+        showToast(`AI settings saved. Provider: ${aiProvider.toUpperCase()}${chosenModel ? ` • ${chosenModel}` : ""}`);
       }
     } catch (err: any) {
       alert("Failed to save AI settings: " + err.message);
@@ -303,8 +355,7 @@ export function SettingsDialog({
                       <div
                         key={p.id}
                         onClick={() => {
-                          setAiProvider(p.id as any);
-                          setTestResult(null);
+                          handleSelectProvider(p.id as any);
                         }}
                         className={`p-3 rounded-xl border transition-all cursor-pointer ${
                           isSelected
@@ -361,6 +412,84 @@ export function SettingsDialog({
                 </div>
               </div>
 
+              {/* Active Model Selector */}
+              <div className="space-y-2 bg-secondary/20 p-3 rounded-xl border border-border/50">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <Cpu className="h-3.5 w-3.5 text-sky-400" />
+                    <span>Active AI Model:</span>
+                    {availableModels.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        ({availableModels.length} available)
+                      </span>
+                    )}
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadModels(aiProvider, apiKey)}
+                      disabled={loadingModels}
+                      className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                      title="Fetch latest active model list from provider"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${loadingModels ? "animate-spin" : ""}`} />
+                      <span>{loadingModels ? "Fetching..." : "Refresh"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomModel(!isCustomModel);
+                        if (!isCustomModel) {
+                          setCustomModelInput(aiModel);
+                        }
+                      }}
+                      className="text-[11px] text-muted-foreground hover:text-foreground underline cursor-pointer"
+                    >
+                      {isCustomModel ? "Pick from list" : "Custom ID"}
+                    </button>
+                  </div>
+                </div>
+
+                {isCustomModel ? (
+                  <div className="space-y-1">
+                    <Input
+                      type="text"
+                      value={customModelInput}
+                      onChange={(e) => setCustomModelInput(e.target.value)}
+                      placeholder="e.g. meta/llama-3.3-70b-instruct, gpt-4o, or custom model"
+                      className="h-9 text-xs bg-secondary/40 border-border"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Enter any exact model identifier supported by your {aiProvider.toUpperCase()} endpoint.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      disabled={loadingModels || availableModels.length === 0}
+                      className="w-full h-9 rounded-md bg-secondary/40 border border-border px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-sky-500 cursor-pointer"
+                    >
+                      {availableModels.length === 0 ? (
+                        <option value={aiModel}>{aiModel || "Loading active models..."}</option>
+                      ) : (
+                        availableModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name || m.id} {m.isRecommended ? "⭐ (Recommended)" : ""}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    {availableModels.find((m) => m.id === aiModel)?.description && (
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {availableModels.find((m) => m.id === aiModel)?.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Validation Result Alert */}
               {testResult && (
                 <div
@@ -386,7 +515,7 @@ export function SettingsDialog({
                   variant="outline"
                   size="sm"
                   onClick={handleTestApiKey}
-                  disabled={testingKey || !apiKey.trim()}
+                  disabled={testingKey || (!apiKey.trim() && !hasCustomKey)}
                   className="text-xs h-8 gap-1.5 border-border hover:bg-secondary cursor-pointer"
                 >
                   <Cpu className={`h-3.5 w-3.5 ${testingKey ? "animate-spin" : ""}`} />
@@ -397,10 +526,10 @@ export function SettingsDialog({
                   type="button"
                   size="sm"
                   onClick={handleSaveAIConfig}
-                  disabled={savingAI || (!apiKey.trim() && !hasCustomKey)}
+                  disabled={savingAI}
                   className="text-xs h-8 gap-1.5 bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
                 >
-                  <span>{savingAI ? "Saving..." : "Save AI Credentials"}</span>
+                  <span>{savingAI ? "Saving..." : "Save AI Settings"}</span>
                 </Button>
               </div>
             </div>

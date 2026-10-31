@@ -15,6 +15,23 @@ export interface ParsedTriageAction {
   summary: string;
 }
 
+export type EmailCategory = 'PROMOTIONAL' | 'SPAM' | 'NEWSLETTER' | 'NOTIFICATION' | 'PRIMARY';
+
+export interface EmailClassification {
+  threadId: string;
+  messageId: string;
+  senderEmail: string;
+  senderName?: string;
+  subject: string;
+  snippet: string;
+  category: EmailCategory;
+  confidence: number;
+  signals: string[];
+  recommendedAction: 'ARCHIVE' | 'TRASH' | 'UNSUBSCRIBE' | 'KEEP';
+  isUnnecessary: boolean;
+  receivedAt: string;
+}
+
 export class AIService {
   /**
    * Parse a natural language triage command into a structured action.
@@ -252,6 +269,262 @@ export class AIService {
     }
 
     return { score, level: PriorityLevel.NORMAL, reason };
+  }
+
+  /**
+   * High-accuracy classifier to distinguish promotional, spam, newsletter, and notification emails.
+   */
+  static classifyEmail(message: {
+    threadId: string;
+    id: string;
+    senderEmail: string;
+    senderName?: string | null;
+    subject: string;
+    snippet?: string | null;
+    bodyText?: string | null;
+    unsubscribeUrl?: string | null;
+    isNewsletter?: boolean;
+    receivedAt: Date | string;
+  }): EmailClassification {
+    const text = `${message.subject || ''} ${message.snippet || ''} ${message.bodyText ? message.bodyText.substring(0, 500) : ''}`.toLowerCase();
+    const sender = (message.senderEmail || '').toLowerCase();
+    const subject = (message.subject || '').toLowerCase();
+    const signals: string[] = [];
+
+    // 1. SPAM / PHISHING / MALICIOUS DETECTION
+    const spamKeywords = [
+      'crypto wallet', 'wire transfer', 'lottery winner', 'inheritance fund',
+      'verify your wallet', 'western union', 'bitcoin deposit', 'eth transfer',
+      'urgent account suspended', 'claim your prize', 'congratulations you won',
+      'transfer your funds', 'foreign beneficiary', 'dear beneficiary',
+      'million dollars transfer', 'act immediately or account deleted',
+    ];
+    const detectedSpam = spamKeywords.filter((kw) => text.includes(kw));
+    if (detectedSpam.length > 0 || (/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(sender) && (sender.includes('lottery') || sender.includes('sweepstakes') || sender.includes('prize')))) {
+      signals.push(`High-risk spam/phishing phrases detected: "${detectedSpam.join('", "')}"`);
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'SPAM',
+        confidence: 95,
+        signals,
+        recommendedAction: 'TRASH',
+        isUnnecessary: true,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 2. PROMOTIONAL / SALES DEALS / MARKETING CAMPAIGNS
+    const promoKeywords = [
+      '% off', 'percent off', 'discount', 'coupon code', 'promo code',
+      'voucher code', 'flash sale', 'sale ends', 'clearance', 'black friday',
+      'cyber monday', 'special offer', 'limited time offer', 'free shipping',
+      'exclusive deal', 'deal of the day', 'save up to', 'exclusive pricing',
+      'upgrade now for $', 'shop now', 'buy now and save', 'don\'t miss out on this deal',
+      'seasonal sale', 'order today and save', 'holiday discount', 'early bird discount',
+    ];
+    const detectedPromo = promoKeywords.filter((kw) => text.includes(kw));
+    const isPromotionalSender =
+      sender.includes('promo') ||
+      sender.includes('deals@') ||
+      sender.includes('marketing@') ||
+      sender.includes('offers@') ||
+      sender.includes('sales@') ||
+      sender.includes('store@') ||
+      sender.includes('rewards@') ||
+      sender.includes('discount@');
+
+    if (detectedPromo.length > 0 || isPromotionalSender) {
+      if (detectedPromo.length > 0) {
+        signals.push(`Marketing keywords: "${detectedPromo.slice(0, 3).join('", "')}"`);
+      }
+      if (isPromotionalSender) {
+        signals.push(`Promotional sender address: <${sender}>`);
+      }
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'PROMOTIONAL',
+        confidence: detectedPromo.length > 1 ? 92 : 85,
+        signals,
+        recommendedAction: 'ARCHIVE',
+        isUnnecessary: true,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 3. NEWSLETTER / DIGEST
+    const isNewsletterSender =
+      message.isNewsletter ||
+      Boolean(message.unsubscribeUrl) ||
+      sender.includes('newsletter') ||
+      sender.includes('substack.com') ||
+      sender.includes('medium.com') ||
+      sender.includes('digest@');
+
+    const newsletterPhrases = [
+      'unsubscribe', 'view in browser', 'manage your preferences',
+      'opt-out', 'weekly digest', 'monthly roundup', 'curated edition',
+      'you received this email because you subscribed',
+    ];
+    const detectedNewsletter = newsletterPhrases.filter((kw) => text.includes(kw));
+
+    if (isNewsletterSender || detectedNewsletter.length >= 2) {
+      if (message.unsubscribeUrl || detectedNewsletter.includes('unsubscribe')) {
+        signals.push('Contains 1-click unsubscribe header/links');
+      }
+      if (isNewsletterSender) {
+        signals.push('Publication or digest platform sender');
+      }
+      if (detectedNewsletter.length > 0) {
+        signals.push(`Newsletter signals: "${detectedNewsletter.slice(0, 2).join('", "')}"`);
+      }
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'NEWSLETTER',
+        confidence: 88,
+        signals,
+        recommendedAction: 'ARCHIVE',
+        isUnnecessary: true,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 4. AUTOMATED NOTIFICATION / TRANSACTIONAL ALERTS
+    const isNotificationSender =
+      sender.includes('noreply') ||
+      sender.includes('no-reply') ||
+      sender.includes('notifications@') ||
+      sender.includes('mailer-daemon') ||
+      sender.includes('system@') ||
+      sender.includes('alert@') ||
+      sender.includes('github.com') ||
+      sender.includes('jira') ||
+      sender.includes('zendesk');
+
+    const notificationPhrases = [
+      'password changed', 'login notification', 'security code',
+      'build completed', 'pull request', 'automated notification',
+      'do not reply to this email', 'receipt for your payment',
+    ];
+    const detectedNotification = notificationPhrases.filter((kw) => text.includes(kw));
+
+    if (isNotificationSender || detectedNotification.length > 0) {
+      signals.push(`Automated bot/system sender: <${sender}>`);
+      if (detectedNotification.length > 0) {
+        signals.push(`Transactional notice: "${detectedNotification.slice(0, 2).join('", "')}"`);
+      }
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'NOTIFICATION',
+        confidence: 82,
+        signals,
+        recommendedAction: 'ARCHIVE',
+        isUnnecessary: true,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 5. PRIMARY CORRESPONDENCE (High importance / personal / business)
+    return {
+      threadId: message.threadId,
+      messageId: message.id,
+      senderEmail: message.senderEmail,
+      senderName: message.senderName || undefined,
+      subject: message.subject,
+      snippet: message.snippet || '',
+      category: 'PRIMARY',
+      confidence: 90,
+      signals: ['Direct human correspondence, client inquiry, or work request'],
+      recommendedAction: 'KEEP',
+      isUnnecessary: false,
+      receivedAt: new Date(message.receivedAt).toISOString(),
+    };
+  }
+
+  /**
+   * Scan, distinguish, and categorize emails across user mailboxes.
+   */
+  static async detectAndClassifyInbox(
+    userId: string,
+    options: {
+      categoryFilter?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary';
+      limit?: number;
+      folder?: string;
+    } = {}
+  ) {
+    const limit = Math.min(Math.max(options.limit || 40, 5), 100);
+
+    const where: any = {
+      account: { userId },
+      isArchived: false,
+    };
+
+    const messages = await prisma.message.findMany({
+      where,
+      orderBy: { receivedAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        threadId: true,
+        senderEmail: true,
+        senderName: true,
+        subject: true,
+        snippet: true,
+        bodyText: true,
+        unsubscribeUrl: true,
+        isNewsletter: true,
+        receivedAt: true,
+      },
+    });
+
+    const classified: EmailClassification[] = messages.map((m) => this.classifyEmail(m));
+
+    const promotional = classified.filter((c) => c.category === 'PROMOTIONAL');
+    const spam = classified.filter((c) => c.category === 'SPAM');
+    const newsletter = classified.filter((c) => c.category === 'NEWSLETTER');
+    const notification = classified.filter((c) => c.category === 'NOTIFICATION');
+    const primary = classified.filter((c) => c.category === 'PRIMARY');
+    const unnecessary = classified.filter((c) => c.isUnnecessary);
+
+    let filtered = classified;
+    if (options.categoryFilter === 'promotional') filtered = promotional;
+    else if (options.categoryFilter === 'spam') filtered = spam;
+    else if (options.categoryFilter === 'newsletter') filtered = newsletter;
+    else if (options.categoryFilter === 'notification') filtered = notification;
+    else if (options.categoryFilter === 'unnecessary') filtered = unnecessary;
+
+    return {
+      totalScanned: messages.length,
+      unnecessaryCount: unnecessary.length,
+      breakdown: {
+        promotional: promotional.length,
+        spam: spam.length,
+        newsletter: newsletter.length,
+        notification: notification.length,
+        primary: primary.length,
+      },
+      filteredCount: filtered.length,
+      emails: filtered,
+    };
   }
 
   /**

@@ -214,13 +214,6 @@ export function MailSidebar({
     onMailListWidthChange?.(340);
   }, [onMailListWidthChange]);
 
-  // Quick Triage Suggestions
-  const triageChips = [
-    { label: "⚡ Urgent Actions", prompt: "Surface urgent client action items and pending deadlines" },
-    { label: "📅 Meeting Invites", prompt: "Find calendar invites and scheduling proposals" },
-    { label: "💼 Financial & Invoices", prompt: "Show receipts, statements and billing updates" },
-  ];
-
   // Calculate unread counts
   const unreadCount = React.useMemo(() => {
     return threads.filter((t) => t.messages[0] && !t.messages[0].isRead).length;
@@ -688,21 +681,6 @@ export function MailSidebar({
               <span className="text-[10px] text-muted-foreground/60 border border-border/60 rounded px-1 shrink-0">
                 ↵
               </span>
-            </div>
-
-            {/* Quick Triage Chips */}
-            <div className="flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar">
-              {triageChips.map((chip) => (
-                <button
-                  key={chip.label}
-                  type="button"
-                  onClick={() => onTriagePromptSubmit(chip.prompt)}
-                  disabled={triageRunning}
-                  className="text-[10px] whitespace-nowrap px-2 py-0.5 rounded-full bg-secondary/60 hover:bg-secondary text-muted-foreground hover:text-foreground border border-border/50 transition-colors shrink-0"
-                >
-                  {chip.label}
-                </button>
-              ))}
             </div>
           </div>
         </SidebarHeader>

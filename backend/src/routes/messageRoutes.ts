@@ -5,6 +5,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { syncBroadcaster, SyncService } from '../services/syncService.js';
 import { AIService } from '../services/aiService.js';
 import { PriorityLevel } from '@prisma/client';
+import { formatEmailHtml } from '../utils/emailFormatter.js';
 
 const router = Router();
 
@@ -15,7 +16,15 @@ interface StreamTicketData {
 }
 const streamTickets = new Map<string, StreamTicketData>();
 
-// Periodic cleanup of expired stream tickets
+// In-memory idempotency cache for outgoing email dispatches (prevents duplicate sends from rapid clicks or concurrent retries)
+interface RecentSendRecord {
+  threadId: string;
+  messageId: string;
+  timestamp: number;
+}
+const recentDispatches = new Map<string, RecentSendRecord>();
+
+// Periodic cleanup of expired stream tickets and send idempotency cache
 setInterval(() => {
   const now = Date.now();
   for (const [ticket, data] of streamTickets.entries()) {
@@ -23,7 +32,13 @@ setInterval(() => {
       streamTickets.delete(ticket);
     }
   }
-}, 60000);
+  const sendCutoff = now - 60000;
+  for (const [fingerprint, data] of recentDispatches.entries()) {
+    if (data.timestamp < sendCutoff) {
+      recentDispatches.delete(fingerprint);
+    }
+  }
+}, 30000);
 
 // Request a short-lived single-use ticket for SSE streaming
 router.post('/stream/ticket', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
@@ -329,8 +344,33 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    // Idempotency check: prevent duplicate sends within 15 seconds (e.g. rapid double clicks)
+    const dispatchFingerprint = crypto
+      .createHash('sha256')
+      .update(
+        `${req.user!.id}:${account.id}:${recipients.slice().sort().join(',')}:${subject.trim()}:${(bodyText || bodyHtml || '').trim()}`
+      )
+      .digest('hex');
+
+    const existingDispatch = recentDispatches.get(dispatchFingerprint);
+    if (!isScheduled && existingDispatch && Date.now() - existingDispatch.timestamp < 15000) {
+      console.warn(
+        `[SendMail Deduplication] Blocked duplicate email send within 15s window: "${subject}" to ${recipients.join(', ')}`
+      );
+      res.status(200).json({
+        success: true,
+        message: 'Email already dispatched (duplicate send prevented).',
+        threadId: existingDispatch.threadId,
+        messageId: existingDispatch.messageId,
+      });
+      return;
+    }
+
+    // Convert raw text or markdown into modern, beautifully styled email HTML
+    const finalBodyHtml = bodyHtml || formatEmailHtml(bodyText || '');
+
     // Priority score
-    const priority = AIService.calculatePriority(subject, bodyText || bodyHtml || '', account.emailAddress);
+    const priority = AIService.calculatePriority(subject, bodyText || finalBodyHtml || '', account.emailAddress);
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
     // Dispatch real email via mail adapter (Gmail, Outlook, or SMTP) unless scheduled for later
@@ -344,8 +384,8 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
         cc: Array.isArray(cc) ? cc : cc ? [cc] : undefined,
         bcc: Array.isArray(bcc) ? bcc : bcc ? [bcc] : undefined,
         subject,
-        bodyHtml: bodyHtml || `<p>${bodyText}</p>`,
-        bodyText: bodyText || bodyHtml,
+        bodyHtml: finalBodyHtml,
+        bodyText: bodyText || finalBodyHtml,
         attachments: hasAttachments
           ? attachments
               .filter((att: any) => att.base64)
@@ -377,7 +417,7 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
         accountId: account.id,
         remoteThreadId: `sent_${Date.now()}`,
         subject,
-        snippet: (bodyText || bodyHtml || '').substring(0, 150),
+        snippet: (bodyText || finalBodyHtml || '').substring(0, 150),
         priorityScore: priority.score,
         priorityLevel: priority.level,
         priorityReason: priority.reason,
@@ -396,9 +436,9 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
         ccList: cc || [],
         bccList: bcc || [],
         subject,
-        snippet: (bodyText || bodyHtml || '').substring(0, 150),
-        bodyHtml: bodyHtml || `<p>${bodyText}</p>`,
-        bodyText: bodyText || bodyHtml,
+        snippet: (bodyText || finalBodyHtml || '').substring(0, 150),
+        bodyHtml: finalBodyHtml,
+        bodyText: bodyText || finalBodyHtml,
         isRead: true,
         hasAttachments,
         status: isScheduled ? 'SCHEDULED' : 'SENT',
@@ -418,6 +458,15 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
           : undefined,
       },
     });
+
+    // Record idempotency record
+    if (!isScheduled) {
+      recentDispatches.set(dispatchFingerprint, {
+        threadId: thread.id,
+        messageId: message.id,
+        timestamp: Date.now(),
+      });
+    }
 
     // Notify client via SSE
     syncBroadcaster.notifyUser(req.user!.id, 'message_sent', {

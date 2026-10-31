@@ -3,6 +3,7 @@ import { AIService } from './aiService.js';
 import { ProposalStatus } from '@prisma/client';
 import { LLMClient, AIProvider } from './llmClient.js';
 import { decryptSecret } from '../utils/crypto.js';
+import { formatEmailHtml } from '../utils/emailFormatter.js';
 
 export interface ActionItem {
   task: string;
@@ -52,12 +53,12 @@ function escapeUntrustedXml(text: string | null | undefined): string {
 
 export class AgentService {
   /**
-   * Resolve user BYOK credentials (Nvidia NIM, OpenAI, Claude, or Google Gemini)
+   * Resolve user BYOK credentials (Nvidia NIM, OpenAI, Claude, or Google Gemini) and preferred model
    */
-  static async getUserAIConfig(userId: string): Promise<{ provider: AIProvider; apiKey?: string }> {
+  static async getUserAIConfig(userId: string): Promise<{ provider: AIProvider; apiKey?: string; model?: string }> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { aiProvider: true, encryptedAiKey: true },
+      select: { aiProvider: true, aiModel: true, encryptedAiKey: true },
     });
 
     const defaultProvider: AIProvider = process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai';
@@ -68,7 +69,8 @@ export class AgentService {
         : defaultProvider;
 
     const apiKey = user?.encryptedAiKey ? decryptSecret(user.encryptedAiKey) : undefined;
-    return { provider, apiKey };
+    const model = user?.aiModel || (provider === 'nvidia' ? (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-bolt-e4b') : undefined);
+    return { provider, apiKey, model };
   }
 
   /**
@@ -268,7 +270,7 @@ export class AgentService {
 
     // Attempt LLM generation if BYOK or server key available
     try {
-      const { provider, apiKey } = await this.getUserAIConfig(userId);
+      const { provider, apiKey, model } = await this.getUserAIConfig(userId);
       const effectiveKey = LLMClient.resolveApiKey(provider, apiKey);
       if (effectiveKey) {
         const prompt = `You are a professional email assistant. Draft an email reply in a ${tone} tone to the following message.
@@ -287,6 +289,7 @@ Return ONLY the drafted response body ready to send.`;
         const response = await LLMClient.generate({
           provider,
           apiKey,
+          model,
           userPrompt: prompt,
           temperature: 0.5,
         });
@@ -626,6 +629,7 @@ Return ONLY the drafted response body ready to send.`;
     if (args.sendImmediately) {
       const recipients = args.to.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
       let remoteMessageId = `msg_agent_${Date.now()}`;
+      const finalHtml = formatEmailHtml(args.body);
       try {
         const { SyncService } = await import('./syncService.js');
         const adapter = await SyncService.getAdapterForAccount(account);
@@ -634,7 +638,7 @@ Return ONLY the drafted response body ready to send.`;
           to: recipients,
           subject: args.subject,
           bodyText: args.body,
-          bodyHtml: `<p>${args.body.replace(/\n/g, '<br/>')}</p>`,
+          bodyHtml: finalHtml,
         });
         if (sendRes?.messageId) {
           remoteMessageId = sendRes.messageId;
@@ -670,7 +674,7 @@ Return ONLY the drafted response body ready to send.`;
           subject: args.subject,
           snippet: args.body.substring(0, 150),
           bodyText: args.body,
-          bodyHtml: `<p>${args.body.replace(/\n/g, '<br/>')}</p>`,
+          bodyHtml: finalHtml,
           isRead: true,
           status: 'SENT',
           receivedAt: new Date(),
@@ -967,6 +971,65 @@ Return ONLY the drafted response body ready to send.`;
   }
 
   /**
+   * Tool: Scan and distinguish promotional, spam, newsletter, and notification emails.
+   */
+  static async toolDetectAndClassifyEmails(
+    userId: string,
+    args: { category?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary'; limit?: number }
+  ) {
+    const { AIService } = await import('./aiService.js');
+    return AIService.detectAndClassifyInbox(userId, {
+      categoryFilter: args.category,
+      limit: args.limit,
+    });
+  }
+
+  /**
+   * Tool: Batch clean unnecessary emails (archive promotional/newsletters, delete spam).
+   */
+  static async toolBatchCleanUnnecessaryEmails(
+    userId: string,
+    args: { categories?: string[]; action?: 'archive' | 'trash' }
+  ) {
+    const { AIService } = await import('./aiService.js');
+    const classification = await AIService.detectAndClassifyInbox(userId, { limit: 100 });
+    const targetCategories = (args.categories || ['promotional', 'spam', 'newsletter', 'notification']).map((c) => c.toUpperCase());
+
+    const matching = classification.emails.filter((e) => targetCategories.includes(e.category));
+    const threadIds = Array.from(new Set(matching.map((e) => e.threadId)));
+
+    if (threadIds.length === 0) {
+      return { success: true, affectedCount: 0, message: 'No matching promotional or unnecessary emails found.' };
+    }
+
+    const action = args.action || 'archive';
+    if (action === 'trash') {
+      await prisma.message.deleteMany({
+        where: { threadId: { in: threadIds }, account: { userId } },
+      });
+      await prisma.thread.deleteMany({
+        where: { id: { in: threadIds }, account: { userId } },
+      });
+    } else {
+      await prisma.message.updateMany({
+        where: { threadId: { in: threadIds }, account: { userId } },
+        data: { isArchived: true },
+      });
+      await prisma.thread.updateMany({
+        where: { id: { in: threadIds }, account: { userId } },
+        data: { isArchived: true },
+      });
+    }
+
+    return {
+      success: true,
+      affectedCount: threadIds.length,
+      action,
+      message: `Successfully cleaned ${threadIds.length} ${targetCategories.join(', ')} thread(s).`,
+    };
+  }
+
+  /**
    * Autonomous Agent Tool Dispatcher: Executes requested tool by name with arguments.
    */
   static async executeTool(
@@ -1049,6 +1112,20 @@ Return ONLY the drafted response body ready to send.`;
           summary: `Generated executive notes with ${notes.actionItems.length} action item(s)`,
         };
       }
+      case 'detect_and_classify_emails': {
+        const res = await this.toolDetectAndClassifyEmails(userId, args);
+        return {
+          result: res,
+          summary: `Scanned ${res.totalScanned} email(s): detected ${res.breakdown.promotional} promotional, ${res.breakdown.spam} spam, ${res.breakdown.newsletter} newsletter(s)`,
+        };
+      }
+      case 'batch_clean_unnecessary_emails': {
+        const res = await this.toolBatchCleanUnnecessaryEmails(userId, args);
+        return {
+          result: res,
+          summary: res.message,
+        };
+      }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1073,6 +1150,7 @@ Return ONLY the drafted response body ready to send.`;
       | 'EMAIL_COMPOSED'
       | 'EMAILS_FOUND'
       | 'CALENDAR_ALIGNED'
+      | 'EMAILS_CLASSIFIED'
       | 'GENERAL_REPLY';
     actionPayload?: Record<string, unknown>;
     toolSteps?: Array<{ tool: string; summary: string; status: 'completed' | 'failed'; resultPreview?: string }>;
@@ -1099,13 +1177,14 @@ Return ONLY the drafted response body ready to send.`;
       | 'EMAIL_COMPOSED'
       | 'EMAILS_FOUND'
       | 'CALENDAR_ALIGNED'
+      | 'EMAILS_CLASSIFIED'
       | 'GENERAL_REPLY' = 'GENERAL_REPLY';
     let actionPayload: Record<string, unknown> | undefined;
 
     // Check for user BYOK LLM credentials
     let llmExecuted = false;
     try {
-      const { provider, apiKey } = await this.getUserAIConfig(userId);
+      const { provider, apiKey, model } = await this.getUserAIConfig(userId);
       const effectiveKey = LLMClient.resolveApiKey(provider, apiKey);
 
       if (effectiveKey) {
@@ -1122,6 +1201,8 @@ Return ONLY the drafted response body ready to send.`;
           '5. schedule_calendar_event: Schedule a calendar meeting and align attendee times. Args: {"title": string, "startTime": string (ISO), "endTime": string (ISO), "description"?: string, "attendees"?: string[], "threadId"?: string}',
           '6. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
           '7. summarize_thread: Synthesize an email thread into executive notes and action items. Args: {"threadId": string}',
+          '8. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
+          '9. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
           '',
           'INSTRUCTIONS:',
           '- You must use tools to inspect real mailbox and calendar data before answering questions.',
@@ -1137,7 +1218,7 @@ Return ONLY the drafted response body ready to send.`;
           '{',
           '  "thought": "All tools completed. Formulating executive final response.",',
           '  "final_response": "Detailed, friendly, professional response to the user explaining what you did and found.",',
-          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"GENERAL_REPLY",',
+          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"EMAILS_CLASSIFIED"|"GENERAL_REPLY",',
           '  "action_payload": { ... }',
           '}',
         ].join('\n');
@@ -1149,6 +1230,7 @@ Return ONLY the drafted response body ready to send.`;
           const llmRes = await LLMClient.generate({
             provider,
             apiKey,
+            model,
             systemPrompt,
             userPrompt: conversationContext,
             temperature: 0.2,
@@ -1172,6 +1254,9 @@ Return ONLY the drafted response body ready to send.`;
           if (parsed?.final_response) {
             reply = parsed.final_response;
             actionType = (parsed.action_type as any) || actionType || 'GENERAL_REPLY';
+            if (toolSteps.some((s) => s.tool === 'detect_and_classify_emails')) {
+              actionType = 'EMAILS_CLASSIFIED';
+            }
             actionPayload = {
               ...(actionPayload || {}),
               ...(parsed.action_payload || {}),
@@ -1222,6 +1307,12 @@ Return ONLY the drafted response body ready to send.`;
                     actionType = 'EMAILS_FOUND';
                     actionPayload = { emailsFound: executed.result };
                   }
+                } else if (call.name === 'detect_and_classify_emails' && executed.result) {
+                  actionType = 'EMAILS_CLASSIFIED';
+                  actionPayload = { classifiedEmails: executed.result };
+                } else if (call.name === 'batch_clean_unnecessary_emails' && executed.result) {
+                  actionType = 'TRIAGE_EXECUTED';
+                  actionPayload = { triageResult: executed.result };
                 }
               } catch (toolErr: any) {
                 toolSteps.push({
@@ -1257,10 +1348,46 @@ Return ONLY the drafted response body ready to send.`;
       const isCalendarQuery = lower.includes('calendar') || lower.includes('schedule') || lower.includes('meet') || lower.includes('call') || lower.includes('align') || lower.includes('slot') || lower.includes('availability') || lower.includes('free') || lower.includes('busy');
       const isDraftQuery = lower.includes('write') || lower.includes('draft') || lower.includes('compose') || lower.includes('reply') || lower.includes('respond') || lower.includes('send');
       const isNotesQuery = lower.includes('summar') || lower.includes('note') || lower.includes('action item') || lower.includes('tldr') || lower.includes('recap');
-      const isTriageQuery = lower.includes('archive') || lower.includes('mark read') || lower.includes('star') || lower.includes('snooze') || lower.includes('clean');
+      const isTriageQuery = lower.includes('archive') || lower.includes('mark read') || lower.includes('star') || lower.includes('snooze');
+      const isClassificationQuery =
+        lower.includes('promo') ||
+        lower.includes('promotional') ||
+        lower.includes('spam') ||
+        lower.includes('unnecessary') ||
+        lower.includes('marketing') ||
+        lower.includes('junk') ||
+        lower.includes('newsletter') ||
+        lower.includes('distinguish') ||
+        lower.includes('clean my inbox') ||
+        lower.includes('clean inbox') ||
+        lower.includes('clean up');
 
+      // 0. PROMOTIONAL / SPAM / UNNECESSARY EMAIL CLASSIFICATION & TRIAGE
+      if (isClassificationQuery) {
+        let catFilter: any = 'unnecessary';
+        if (lower.includes('promo') || lower.includes('promotional')) catFilter = 'promotional';
+        else if (lower.includes('spam')) catFilter = 'spam';
+        else if (lower.includes('newsletter')) catFilter = 'newsletter';
+
+        const classification = await this.toolDetectAndClassifyEmails(userId, { category: catFilter, limit: 50 });
+        toolSteps.push({
+          tool: 'detect_and_classify_emails',
+          summary: `Scanned ${classification.totalScanned} email(s): detected ${classification.breakdown.promotional} promotional, ${classification.breakdown.spam} spam, ${classification.breakdown.newsletter} newsletter(s)`,
+          status: 'completed',
+        });
+
+        reply = `I scanned your inboxes to distinguish and filter unnecessary emails:\n\n` +
+          `• 🏷️ **Promotional**: ${classification.breakdown.promotional} email(s) (marketing deals, discounts)\n` +
+          `• 🚨 **Spam / Suspicious**: ${classification.breakdown.spam} email(s)\n` +
+          `• 📰 **Newsletters & Digests**: ${classification.breakdown.newsletter} email(s)\n` +
+          `• 🔔 **System Notifications**: ${classification.breakdown.notification} email(s)\n` +
+          `• 📬 **Primary Human Correspondence**: ${classification.breakdown.primary} email(s)\n\n` +
+          `You can review each categorized email below or use 1-click actions to clean your inbox!`;
+        actionType = 'EMAILS_CLASSIFIED';
+        actionPayload = { classifiedEmails: classification };
+      }
       // 1. NOTES & SUMMARY TOOL
-      if (threadId && isNotesQuery) {
+      else if (threadId && isNotesQuery) {
         const notes = await this.generateThreadNotes(userId, threadId);
         toolSteps.push({
           tool: 'summarize_thread',

@@ -89,9 +89,11 @@ export function ComposeDialog({
   const [showScheduleMenu, setShowScheduleMenu] = React.useState(false);
   const [scheduledTime, setScheduledTime] = React.useState<string | null>(null);
   const [scheduledLabel, setScheduledLabel] = React.useState<string | null>(null);
+  const [customScheduleInput, setCustomScheduleInput] = React.useState<string>("");
 
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const isSendingRef = React.useRef<boolean>(false);
 
   React.useEffect(() => {
     if (open) {
@@ -263,9 +265,10 @@ export function ComposeDialog({
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!to || !selectedAccountId) return;
+    if (isSendingRef.current || sending || !to || !selectedAccountId) return;
 
     try {
+      isSendingRef.current = true;
       setSending(true);
 
       // Convert attachments to base64 payload
@@ -322,6 +325,7 @@ export function ComposeDialog({
     } catch (err: any) {
       alert("Failed to send email: " + err.message);
     } finally {
+      isSendingRef.current = false;
       setSending(false);
     }
   };
@@ -668,9 +672,9 @@ export function ComposeDialog({
 
               {/* Schedule Later Dropdown Menu */}
               {showScheduleMenu && (
-                <div className="absolute right-0 bottom-full mb-2 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 space-y-1 text-xs">
-                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">
-                    Send Later
+                <div className="absolute right-0 bottom-full mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 space-y-1.5 text-xs">
+                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-0.5">
+                    Schedule Presets
                   </div>
                   {getSchedulePresets().map((preset) => (
                     <button
@@ -681,7 +685,7 @@ export function ComposeDialog({
                         setScheduledLabel(preset.label);
                         setShowScheduleMenu(false);
                       }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center justify-between"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center justify-between transition-colors"
                     >
                       <span>{preset.label}</span>
                       {scheduledTime === preset.time && (
@@ -689,7 +693,51 @@ export function ComposeDialog({
                       )}
                     </button>
                   ))}
-                  <div className="border-t border-slate-800 pt-1 mt-1">
+
+                  {/* Manual / Custom Date & Time Picker */}
+                  <div className="border-t border-slate-800 pt-2 px-1">
+                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-blue-400" />
+                      <span>Custom Date & Time</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Input
+                        type="datetime-local"
+                        value={customScheduleInput}
+                        onChange={(e) => setCustomScheduleInput(e.target.value)}
+                        min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                        className="h-8 text-xs bg-slate-800/90 border-slate-700 text-slate-100 px-2"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!customScheduleInput}
+                        onClick={() => {
+                          if (!customScheduleInput) return;
+                          const targetDate = new Date(customScheduleInput);
+                          if (isNaN(targetDate.getTime()) || targetDate.getTime() <= Date.now()) {
+                            alert("Please choose a future date and time.");
+                            return;
+                          }
+                          setScheduledTime(targetDate.toISOString());
+                          setScheduledLabel(
+                            targetDate.toLocaleString([], {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          );
+                          setShowScheduleMenu(false);
+                        }}
+                        className="w-full h-7 text-[11px] bg-blue-600 hover:bg-blue-500 text-white cursor-pointer"
+                      >
+                        Set Custom Schedule
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-800 pt-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -697,9 +745,9 @@ export function ComposeDialog({
                         setScheduledLabel(null);
                         setShowScheduleMenu(false);
                       }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-400"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
                     >
-                      Send Immediately
+                      Send Immediately (Reset)
                     </button>
                   </div>
                 </div>

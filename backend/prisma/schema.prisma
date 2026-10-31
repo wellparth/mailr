@@ -49,6 +49,7 @@ model User {
   name               String?
   passwordHash       String             @map("password_hash")
   aiProvider         String?            @default("openai") @map("ai_provider")
+  aiModel            String?            @default("nvidia/nemotron-3.5-bolt-e4b") @map("ai_model")
   encryptedAiKey     String?            @db.Text @map("encrypted_ai_key")
   accounts           EmailAccount[]
   triageLogs         AITriageLog[]

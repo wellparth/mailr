@@ -92,3 +92,115 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.22);
 }
+
+
+/* Email Body Content Styling for High-Fidelity Rendering Across Inboxes & Themes */
+.email-body-content {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+  word-break: break-word;
+}
+
+.email-body-content p {
+  margin-top: 0;
+  margin-bottom: 0.85rem;
+  line-height: 1.65;
+}
+
+.email-body-content p:last-child {
+  margin-bottom: 0;
+}
+
+.email-body-content h1,
+.email-body-content h2,
+.email-body-content h3,
+.email-body-content h4 {
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: hsl(var(--foreground));
+  line-height: 1.35;
+}
+
+.email-body-content h1 { font-size: 1.35rem; }
+.email-body-content h2 { font-size: 1.2rem; }
+.email-body-content h3 { font-size: 1.05rem; }
+
+.email-body-content ul {
+  list-style-type: disc;
+  margin-top: 0.5rem;
+  margin-bottom: 0.85rem;
+  padding-left: 1.5rem;
+}
+
+.email-body-content ol {
+  list-style-type: decimal;
+  margin-top: 0.5rem;
+  margin-bottom: 0.85rem;
+  padding-left: 1.5rem;
+}
+
+.email-body-content li {
+  margin-bottom: 0.35rem;
+  line-height: 1.6;
+}
+
+.email-body-content blockquote {
+  border-left: 3px solid #38bdf8;
+  background-color: rgba(56, 189, 248, 0.08);
+  margin: 0.85rem 0;
+  padding: 0.5rem 1rem;
+  color: hsl(var(--muted-foreground));
+  border-radius: 0 0.375rem 0.375rem 0;
+  font-style: italic;
+}
+
+.email-body-content a {
+  color: #38bdf8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.email-body-content code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.email-body-content pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.85rem 0;
+  border: 1px solid hsl(var(--border));
+}
+
+.email-body-content hr {
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.25rem 0;
+}
+
+.email-body-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.85rem 0;
+}
+
+.email-body-content th,
+.email-body-content td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.email-body-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+}
