@@ -840,6 +840,14 @@ export default function AppMailPage() {
           activeThread={selectedThread}
           onInsertDraftToComposer={handleInsertDraftToComposer}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onSelectThread={(id) => {
+            setSelectedThreadId(id);
+            fetchThreadDetail(id);
+          }}
+          onEmailSent={() => {
+            showToast("Email dispatched successfully.");
+            fetchData();
+          }}
         />
       </SidebarInset>
 

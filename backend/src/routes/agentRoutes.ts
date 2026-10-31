@@ -46,7 +46,25 @@ router.get('/history/:threadId?', async (req: AuthenticatedRequest, res: Respons
       take: 50,
     });
 
-    res.json({ messages });
+    const formatted = messages.map((m) => {
+      let payloadData: any = m.actionPayload;
+      if (typeof payloadData === 'string') {
+        try {
+          payloadData = JSON.parse(payloadData);
+        } catch {}
+      }
+      return {
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        actionType: payloadData?.actionType || 'GENERAL_REPLY',
+        actionPayload: payloadData?.actionPayload !== undefined ? payloadData.actionPayload : payloadData,
+        toolSteps: payloadData?.toolSteps || undefined,
+        createdAt: m.createdAt.toISOString(),
+      };
+    });
+
+    res.json({ messages: formatted });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'History error';
     res.status(500).json({ error: msg });

@@ -20,6 +20,10 @@ import {
   Settings,
   Link as LinkIcon,
   GripVertical,
+  CheckCircle2,
+  AlertTriangle,
+  Search,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,12 +37,28 @@ interface ActionItem {
   completed?: boolean;
 }
 
+export interface ToolStep {
+  tool: string;
+  summary: string;
+  status: "completed" | "failed";
+  resultPreview?: string;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  actionType?: "NOTES_GENERATED" | "DRAFT_CREATED" | "MEETING_SCHEDULED" | "TRIAGE_EXECUTED" | "GENERAL_REPLY";
+  actionType?:
+    | "NOTES_GENERATED"
+    | "DRAFT_CREATED"
+    | "MEETING_SCHEDULED"
+    | "TRIAGE_EXECUTED"
+    | "EMAIL_COMPOSED"
+    | "EMAILS_FOUND"
+    | "CALENDAR_ALIGNED"
+    | "GENERAL_REPLY";
   actionPayload?: any;
+  toolSteps?: ToolStep[];
   createdAt?: string;
 }
 
@@ -49,6 +69,8 @@ interface AICopilotDrawerProps {
   onInsertDraftToComposer: (draftText: string, subject?: string, recipientEmail?: string) => void;
   onOpenNotesTab?: () => void;
   onOpenSettings?: () => void;
+  onSelectThread?: (threadId: string) => void;
+  onEmailSent?: () => void;
 }
 
 export function AICopilotDrawer({
@@ -58,6 +80,8 @@ export function AICopilotDrawer({
   onInsertDraftToComposer,
   onOpenNotesTab,
   onOpenSettings,
+  onSelectThread,
+  onEmailSent,
 }: AICopilotDrawerProps) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([
     {
@@ -174,6 +198,51 @@ export function AICopilotDrawer({
     }
   }, [open, activeThread?.id]);
 
+  const [sendingCardId, setSendingCardId] = React.useState<string | null>(null);
+
+  const handleSendDraftNow = async (draftData: any, msgId: string) => {
+    try {
+      setSendingCardId(msgId);
+      const recipient = draftData.recipientEmail || draftData.to;
+      const subject = draftData.subject || "No Subject";
+      const bodyText = draftData.draft || draftData.body || "";
+
+      await apiFetch("/api/messages/send", {
+        method: "POST",
+        body: JSON.stringify({
+          accountId: draftData.accountId,
+          to: recipient,
+          subject,
+          bodyText,
+          threadId: draftData.threadId,
+        }),
+      });
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                actionPayload: {
+                  ...m.actionPayload,
+                  draftResult: {
+                    ...(m.actionPayload?.draftResult || {}),
+                    sent: true,
+                  },
+                },
+              }
+            : m
+        )
+      );
+
+      onEmailSent?.();
+    } catch (err: any) {
+      alert("Failed to dispatch email: " + (err.message || "Unknown error"));
+    } finally {
+      setSendingCardId(null);
+    }
+  };
+
   const handleSendMessage = async (textToSend?: string) => {
     const promptText = (textToSend || input).trim();
     if (!promptText || loading) return;
@@ -204,6 +273,7 @@ export function AICopilotDrawer({
           content: res.reply || "Done.",
           actionType: res.actionType,
           actionPayload: res.actionPayload,
+          toolSteps: res.toolSteps,
         };
         setMessages((prev) => [...prev, botMsg]);
       }
@@ -317,45 +387,76 @@ export function AICopilotDrawer({
       </div>
 
       {/* Quick Action Chips Bar */}
-      {activeThread && (
-        <div className="p-2.5 bg-secondary/30 border-b border-border/50 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar">
-          <button
-            onClick={() => handleSendMessage("Summarize this thread and generate executive notes with action items")}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
-          >
-            <FileText className="h-3 w-3 text-sky-400" />
-            <span>Create Notes</span>
-          </button>
+      <div className="p-2.5 bg-secondary/30 border-b border-border/50 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar">
+        {activeThread ? (
+          <>
+            <button
+              onClick={() => handleSendMessage("Summarize this thread and generate executive notes with action items")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <FileText className="h-3 w-3 text-sky-400" />
+              <span>Create Notes</span>
+            </button>
 
-          <button
-            onClick={() => handleSendMessage("Check calendar and schedule a meeting from this email")}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
-          >
-            <Calendar className="h-3 w-3 text-emerald-400" />
-            <span>Schedule Meeting</span>
-          </button>
+            <button
+              onClick={() => handleSendMessage("Check calendar, detect any conflicts, and schedule a meeting from this email")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Calendar className="h-3 w-3 text-emerald-400" />
+              <span>Align & Schedule</span>
+            </button>
 
-          <button
-            onClick={() => handleSendMessage("Draft a polite and professional follow-up reply")}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
-          >
-            <Mail className="h-3 w-3 text-indigo-400" />
-            <span>Draft Reply</span>
-          </button>
+            <button
+              onClick={() => handleSendMessage("Draft a polite and professional follow-up reply")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Mail className="h-3 w-3 text-indigo-400" />
+              <span>Draft Reply</span>
+            </button>
 
-          <button
-            onClick={() => handleSendMessage("Draft a reply offering my calendar booking link")}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
-          >
-            <LinkIcon className="h-3 w-3 text-amber-400" />
-            <span>Send Booking Link</span>
-          </button>
-        </div>
-      )}
+            <button
+              onClick={() => handleSendMessage("Draft a reply offering my calendar booking link")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <LinkIcon className="h-3 w-3 text-amber-400" />
+              <span>Send Booking Link</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => handleSendMessage("Read all my unread emails and check my calendar to align everything and write a draft")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[11px] font-medium border border-emerald-500/30 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Sparkles className="h-3 w-3 text-emerald-400" />
+              <span>Read Emails & Align Schedule</span>
+            </button>
+
+            <button
+              onClick={() => handleSendMessage("Check my upcoming calendar events and find all open free slots")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Calendar className="h-3 w-3 text-sky-400" />
+              <span>Find Free Slots</span>
+            </button>
+
+            <button
+              onClick={() => handleSendMessage("Compose a new email draft")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-foreground text-[11px] font-medium border border-border/60 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Mail className="h-3 w-3 text-indigo-400" />
+              <span>Compose Email</span>
+            </button>
+          </>
+        )}
+      </div>
 
       {/* Chat Messages Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -380,6 +481,33 @@ export function AICopilotDrawer({
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                 </div>
+
+                {/* Autonomous Tool Steps Pill List */}
+                {msg.toolSteps && msg.toolSteps.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400">
+                      <Sparkles className="h-3 w-3" />
+                      <span>Autonomous Actions Executed ({msg.toolSteps.length}):</span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {msg.toolSteps.map((step, sIdx) => (
+                        <div
+                          key={sIdx}
+                          className="flex items-center justify-between px-2 py-1 rounded-lg bg-card/60 border border-border/60 text-[10px]"
+                        >
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                            <span className="font-mono text-sky-400 font-semibold">{step.tool}</span>
+                            <span className="text-muted-foreground truncate">{step.summary}</span>
+                          </div>
+                          <span className="text-[9px] px-1.5 py-0 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0 ml-1.5">
+                            Done
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* 1. Interactive Card: Notes Generated */}
                 {msg.actionType === "NOTES_GENERATED" && msg.actionPayload?.notes && (
@@ -414,91 +542,232 @@ export function AICopilotDrawer({
                   </div>
                 )}
 
-                {/* 2. Interactive Card: Draft Reply Created */}
-                {msg.actionType === "DRAFT_CREATED" && msg.actionPayload?.draftResult && (
+                {/* 2. Interactive Card: Draft / Composed Email */}
+                {(msg.actionType === "DRAFT_CREATED" || msg.actionType === "EMAIL_COMPOSED") && msg.actionPayload?.draftResult && (
                   <div className="p-3 bg-secondary/40 border border-indigo-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
                     <div className="flex items-center justify-between font-semibold text-indigo-400">
                       <span className="flex items-center gap-1.5">
                         <Mail className="h-3.5 w-3.5" />
-                        Draft Reply Ready
+                        {msg.actionPayload.draftResult.sent ? "Email Dispatched" : "Email Draft Ready"}
                       </span>
                       <button
-                        onClick={() => copyToClipboard(msg.actionPayload.draftResult.draft, msg.id)}
+                        onClick={() =>
+                          copyToClipboard(
+                            msg.actionPayload.draftResult.draft || msg.actionPayload.draftResult.body || "",
+                            msg.id
+                          )
+                        }
                         className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 cursor-pointer"
                       >
                         {copiedId === msg.id ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                         <span>{copiedId === msg.id ? "Copied" : "Copy"}</span>
                       </button>
                     </div>
-                    <div className="p-2 rounded bg-background/50 border border-border/50 text-[11px] text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap">
-                      {msg.actionPayload.draftResult.draft}
+
+                    <div className="text-[11px] text-muted-foreground space-y-0.5">
+                      <div>
+                        To:{" "}
+                        <span className="text-foreground font-medium">
+                          {msg.actionPayload.draftResult.recipientEmail || msg.actionPayload.draftResult.to}
+                        </span>
+                      </div>
+                      <div>
+                        Subject:{" "}
+                        <span className="text-foreground font-medium">
+                          {msg.actionPayload.draftResult.subject}
+                        </span>
+                      </div>
                     </div>
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        onInsertDraftToComposer(
-                          msg.actionPayload.draftResult.draft,
-                          msg.actionPayload.draftResult.subject,
-                          msg.actionPayload.draftResult.recipientEmail
-                        )
-                      }
-                      className="w-full text-xs bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5 h-7 cursor-pointer"
-                    >
-                      <Mail className="h-3 w-3" />
-                      <span>Insert into Composer</span>
-                    </Button>
+
+                    <div className="p-2.5 rounded-lg bg-background/50 border border-border/50 text-[11px] text-muted-foreground max-h-36 overflow-y-auto whitespace-pre-wrap leading-relaxed font-sans">
+                      {msg.actionPayload.draftResult.draft || msg.actionPayload.draftResult.body}
+                    </div>
+
+                    {msg.actionPayload.draftResult.sent ? (
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium py-1">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Dispatched successfully through connected inbox</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            onInsertDraftToComposer(
+                              msg.actionPayload.draftResult.draft || msg.actionPayload.draftResult.body || "",
+                              msg.actionPayload.draftResult.subject,
+                              msg.actionPayload.draftResult.recipientEmail || msg.actionPayload.draftResult.to
+                            )
+                          }
+                          className="w-full text-xs gap-1.5 h-8 border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10 cursor-pointer"
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                          <span>In Composer</span>
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          disabled={sendingCardId === msg.id}
+                          onClick={() => handleSendDraftNow(msg.actionPayload.draftResult, msg.id)}
+                          className="w-full text-xs bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5 h-8 cursor-pointer shadow-sm"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>{sendingCardId === msg.id ? "Sending..." : "Send Now"}</span>
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 3. Interactive Card: Meeting Scheduled */}
-                {msg.actionType === "MEETING_SCHEDULED" && msg.actionPayload?.meeting && (
-                  <div className="p-3 bg-secondary/40 border border-emerald-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
-                    <div className="flex items-center justify-between font-semibold text-emerald-400">
+                {/* 3. Interactive Card: Meeting & Calendar Aligned */}
+                {(msg.actionType === "MEETING_SCHEDULED" || msg.actionType === "CALENDAR_ALIGNED") && (
+                  <div className="space-y-2">
+                    {msg.actionPayload?.meeting && (
+                      <div className="p-3 bg-secondary/40 border border-emerald-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
+                        <div className="flex items-center justify-between font-semibold text-emerald-400">
+                          <span className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5" />
+                            Meeting Aligned & Prepared
+                          </span>
+                          <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/40">
+                            {new Date(msg.actionPayload.meeting.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </Badge>
+                        </div>
+                        <p className="font-medium text-foreground">{msg.actionPayload.meeting.title}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {new Date(msg.actionPayload.meeting.startTime).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                        </p>
+
+                        {/* Conflict Detection Indicator */}
+                        {msg.actionPayload.meeting.hasConflict ? (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                            <span>Schedule overlap detected with an existing appointment</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300">
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                            <span>Schedule aligned: Clear slot with 0 conflicts</span>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                          <a
+                            href={msg.actionPayload.meeting.googleCalendarUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-medium transition-colors"
+                          >
+                            <Calendar className="h-3 w-3" />
+                            <span>Google Cal</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+
+                          <a
+                            href={msg.actionPayload.meeting.outlookCalendarUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-medium transition-colors"
+                          >
+                            <Calendar className="h-3 w-3" />
+                            <span>Outlook</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+                        </div>
+
+                        <a
+                          href={msg.actionPayload.meeting.icsDownloadUrl}
+                          download
+                          className="flex items-center justify-center gap-1.5 w-full py-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/60 rounded-lg hover:bg-secondary transition-colors"
+                        >
+                          <Download className="h-3 w-3" />
+                          <span>Download .ics Calendar File</span>
+                        </a>
+                      </div>
+                    )}
+
+                    {msg.actionPayload?.calendarAligned && (
+                      <div className="p-3 bg-secondary/40 border border-emerald-500/30 rounded-xl space-y-2 text-xs text-foreground animate-in fade-in">
+                        <div className="flex items-center justify-between font-semibold text-emerald-400">
+                          <span className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5" />
+                            Schedule & Available Windows
+                          </span>
+                          <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/30">
+                            {msg.actionPayload.calendarAligned.count} Events
+                          </Badge>
+                        </div>
+                        {msg.actionPayload.calendarAligned.freeSlots && msg.actionPayload.calendarAligned.freeSlots.length > 0 && (
+                          <div className="space-y-1.5 pt-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Optimal Free Meeting Slots:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {msg.actionPayload.calendarAligned.freeSlots.map((slot: any, idx: number) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => handleSendMessage(`Schedule a meeting for ${slot.label}`)}
+                                  className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] transition-colors cursor-pointer"
+                                >
+                                  {slot.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 4. Interactive Card: Emails Discovered */}
+                {msg.actionType === "EMAILS_FOUND" && msg.actionPayload?.emailsFound && (
+                  <div className="p-3 bg-secondary/40 border border-sky-500/30 rounded-xl space-y-2 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center justify-between font-semibold text-sky-400">
                       <span className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5" />
-                        Meeting Prepared
+                        <Mail className="h-3.5 w-3.5" />
+                        Discovered Conversations
                       </span>
-                      <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/40">
-                        {new Date(msg.actionPayload.meeting.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <Badge variant="outline" className="text-[10px] text-sky-400 border-sky-500/30">
+                        {msg.actionPayload.emailsFound.count} found
                       </Badge>
                     </div>
-                    <p className="font-medium">{msg.actionPayload.meeting.title}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {new Date(msg.actionPayload.meeting.startTime).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-1.5 pt-1">
-                      <a
-                        href={msg.actionPayload.meeting.googleCalendarUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-medium transition-colors"
-                      >
-                        <Calendar className="h-3 w-3" />
-                        <span>Google Cal</span>
-                        <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
-
-                      <a
-                        href={msg.actionPayload.meeting.outlookCalendarUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-medium transition-colors"
-                      >
-                        <Calendar className="h-3 w-3" />
-                        <span>Outlook</span>
-                        <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
+                    <div className="divide-y divide-border/40 max-h-48 overflow-y-auto space-y-1">
+                      {msg.actionPayload.emailsFound.threads?.map((th: any) => (
+                        <div
+                          key={th.id}
+                          onClick={() => onSelectThread?.(th.id)}
+                          className={cn(
+                            "py-1.5 px-1 hover:bg-secondary/60 rounded transition-colors",
+                            onSelectThread && "cursor-pointer group"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-medium text-foreground truncate max-w-[160px] group-hover:text-sky-400">
+                              {th.latestSender}
+                            </span>
+                            {!th.isRead && (
+                              <span className="text-[9px] px-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                Unread
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate">{th.subject}</p>
+                        </div>
+                      ))}
                     </div>
+                  </div>
+                )}
 
-                    <a
-                      href={msg.actionPayload.meeting.icsDownloadUrl}
-                      download
-                      className="flex items-center justify-center gap-1.5 w-full py-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/60 rounded-lg hover:bg-secondary transition-colors"
-                    >
-                      <Download className="h-3 w-3" />
-                      <span>Download .ics Calendar File</span>
-                    </a>
+                {/* 5. Interactive Card: Mailbox Triage */}
+                {msg.actionType === "TRIAGE_EXECUTED" && msg.actionPayload?.triageRes && (
+                  <div className="p-3 bg-secondary/40 border border-amber-500/30 rounded-xl space-y-1.5 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center gap-1.5 font-semibold text-amber-400">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Mailbox Triage Executed</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Successfully processed {msg.actionPayload.triageRes.affectedCount} conversation(s) according to your rules.
+                    </p>
                   </div>
                 )}
               </div>
