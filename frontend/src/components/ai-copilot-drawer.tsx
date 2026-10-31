@@ -19,10 +19,12 @@ import {
   Download,
   Settings,
   Link as LinkIcon,
+  GripVertical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 interface ActionItem {
   task: string;
@@ -69,6 +71,71 @@ export function AICopilotDrawer({
   const [loading, setLoading] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [byokInfo, setByokInfo] = React.useState<{ provider: string; hasCustomKey: boolean } | null>(null);
+
+  // Resizable width state (persisted in localStorage)
+  const [copilotWidth, setCopilotWidth] = React.useState<number>(380);
+  const [isDragging, setIsDragging] = React.useState(false);
+
+  // Restore saved width from localStorage
+  React.useEffect(() => {
+    try {
+      const savedWidth = localStorage.getItem("mailr_copilot_width");
+      if (savedWidth) {
+        const parsed = parseInt(savedWidth, 10);
+        if (!isNaN(parsed) && parsed >= 300 && parsed <= 750) {
+          setCopilotWidth(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleWidthChange = React.useCallback((width: number) => {
+    setCopilotWidth(width);
+    try {
+      localStorage.setItem("mailr_copilot_width", String(width));
+    } catch {}
+  }, []);
+
+  // Resize handler for AI Copilot (left draggable border)
+  const handleMouseDown = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startWidth = copilotWidth;
+
+      setIsDragging(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        moveEvent.preventDefault();
+        // Since Copilot is docked to the right, dragging left increases width
+        const delta = startX - moveEvent.clientX;
+        const minWidth = 300;
+        const maxWidth = Math.max(minWidth, Math.min(680, window.innerWidth - 380));
+        const newWidth = Math.min(Math.max(startWidth + delta, minWidth), maxWidth);
+        handleWidthChange(newWidth);
+      };
+
+      const handleMouseUp = () => {
+        setIsDragging(false);
+        document.body.style.removeProperty("cursor");
+        document.body.style.removeProperty("user-select");
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [copilotWidth, handleWidthChange]
+  );
+
+  const handleDoubleClick = React.useCallback(() => {
+    handleWidthChange(380);
+  }, [handleWidthChange]);
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -168,7 +235,43 @@ export function AICopilotDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm sm:max-w-md bg-card/95 backdrop-blur-xl border-l border-border shadow-2xl flex flex-col transition-all duration-300 animate-in slide-in-from-right">
+    <div
+      style={{ width: `${copilotWidth}px` }}
+      className={cn(
+        "relative shrink-0 h-full border-l border-border bg-card/95 backdrop-blur-xl flex flex-col z-20 transition-all duration-200 ease-in-out animate-in slide-in-from-right",
+        "max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-50 max-md:!w-full max-md:!max-w-md",
+        isDragging && "select-none transition-none"
+      )}
+    >
+      {/* Draggable Vertical Resize Handle (Left edge on desktop) */}
+      <div
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        className={cn(
+          "absolute -left-1.5 top-0 bottom-0 w-3 cursor-col-resize z-30 group hidden md:flex items-center justify-center transition-all",
+          isDragging && "w-4 -left-2"
+        )}
+        title="Drag to resize Copilot (Double-click to reset)"
+      >
+        <div
+          className={cn(
+            "w-[2px] h-full transition-colors group-hover:bg-emerald-500/60",
+            isDragging ? "bg-emerald-500 w-[3px]" : "bg-transparent group-hover:bg-emerald-500/40"
+          )}
+        />
+        {/* Subtle pill indicator at center */}
+        <div
+          className={cn(
+            "absolute top-1/2 -translate-y-1/2 rounded-full p-0.5 transition-all shadow-sm opacity-0 group-hover:opacity-100",
+            isDragging
+              ? "opacity-100 bg-emerald-500 text-slate-950 scale-110"
+              : "bg-muted border border-border text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between p-3.5 border-b border-border bg-card/40">
         <div className="flex items-center gap-2">

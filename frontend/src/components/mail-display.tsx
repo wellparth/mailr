@@ -125,6 +125,7 @@ interface MailDisplayProps {
   onOpenConnectModal: () => void;
   onOpenCompose: () => void;
   onOpenCopilot?: () => void;
+  isCopilotOpen?: boolean;
 }
 
 export function MailDisplay({
@@ -138,6 +139,7 @@ export function MailDisplay({
   onOpenConnectModal,
   onOpenCompose,
   onOpenCopilot,
+  isCopilotOpen = false,
 }: MailDisplayProps) {
   const [replyText, setReplyText] = React.useState("");
   const [generatingTone, setGeneratingTone] = React.useState<string | null>(null);
@@ -530,13 +532,17 @@ export function MailDisplay({
         <div className="flex items-center gap-1.5">
           {onOpenCopilot && (
             <Button
-              variant="outline"
+              variant={isCopilotOpen ? "secondary" : "outline"}
               size="sm"
               onClick={onOpenCopilot}
-              className="h-8 gap-1.5 px-2.5 text-xs bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border-emerald-500/30 cursor-pointer shadow-sm"
-              title="Open Mailr AI Copilot (Ctrl+J)"
+              className={`h-8 gap-1.5 px-2.5 text-xs cursor-pointer shadow-sm transition-all ${
+                isCopilotOpen
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-emerald-500/10"
+                  : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border-emerald-500/30"
+              }`}
+              title={isCopilotOpen ? "Close Mailr AI Copilot (Ctrl+J)" : "Open Mailr AI Copilot (Ctrl+J)"}
             >
-              <Sparkles className="h-3.5 w-3.5" />
+              <Sparkles className="h-3.5 w-3.5 fill-emerald-400/20" />
               <span className="font-medium hidden sm:inline">Copilot</span>
               <kbd className="hidden md:inline px-1 py-0 text-[10px] bg-background/50 rounded border border-emerald-500/30 text-emerald-300">
                 Ctrl+J
@@ -1025,14 +1031,14 @@ export function MailDisplay({
         )}
 
         {/* Email Message Content */}
-        <div className="prose prose-invert max-w-none text-sm text-foreground/90 leading-relaxed font-sans space-y-4">
+        <div className="prose prose-invert max-w-none text-sm text-foreground/90 leading-relaxed font-sans space-y-4 break-words">
           {latestMessage?.bodyHtml ? (
             <div
-              className="email-body-content overflow-x-auto bg-card/20 p-4 rounded-xl border border-border/30"
+              className="email-body-content overflow-x-auto max-w-full bg-card/20 p-4 rounded-xl border border-border/30 break-words"
               dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(latestMessage.bodyHtml) }}
             />
           ) : (
-            <div className="whitespace-pre-wrap font-sans text-sm bg-card/20 p-4 rounded-xl border border-border/30">
+            <div className="whitespace-pre-wrap font-sans text-sm bg-card/20 p-4 rounded-xl border border-border/30 break-words">
               {latestMessage?.bodyText || latestMessage?.snippet || "No text body available."}
             </div>
           )}

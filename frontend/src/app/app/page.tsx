@@ -815,19 +815,31 @@ export default function AppMailPage() {
         setIsDragging={setIsDraggingSidebar}
       />
 
-      {/* Third Pane: Reading / Action Detail View */}
-      <SidebarInset className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
-        <MailDisplay
-          thread={selectedThread}
-          accountsCount={accounts.length}
-          onStarToggle={handleStarToggle}
-          onArchive={handleArchive}
-          onDelete={handleDelete}
-          onReplySuccess={fetchData}
-          onOpenConnectModal={() => setIsConnectModalOpen(true)}
-          onOpenCompose={() => setIsComposeOpen(true)}
-          onOpenCopilot={() => setIsCopilotOpen(true)}
-          onSnooze={handleSnooze}
+      {/* Third Pane: Reading / Action Detail View & AI Copilot Split */}
+      <SidebarInset className="flex-1 flex flex-row h-screen overflow-hidden bg-background relative min-w-0">
+        <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0 transition-all duration-200 ease-in-out">
+          <MailDisplay
+            thread={selectedThread}
+            accountsCount={accounts.length}
+            onStarToggle={handleStarToggle}
+            onArchive={handleArchive}
+            onDelete={handleDelete}
+            onReplySuccess={fetchData}
+            onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onOpenCompose={() => setIsComposeOpen(true)}
+            onOpenCopilot={() => setIsCopilotOpen((prev) => !prev)}
+            isCopilotOpen={isCopilotOpen}
+            onSnooze={handleSnooze}
+          />
+        </div>
+
+        {/* Autonomous AI Copilot Drawer */}
+        <AICopilotDrawer
+          open={isCopilotOpen}
+          onClose={() => setIsCopilotOpen(false)}
+          activeThread={selectedThread}
+          onInsertDraftToComposer={handleInsertDraftToComposer}
+          onOpenSettings={() => setIsSettingsOpen(true)}
         />
       </SidebarInset>
 
@@ -875,15 +887,6 @@ export default function AppMailPage() {
         open={isSettingsOpen}
         onOpenChange={setIsSettingsOpen}
         accountsCount={accounts.length}
-      />
-
-      {/* Autonomous AI Copilot Drawer */}
-      <AICopilotDrawer
-        open={isCopilotOpen}
-        onClose={() => setIsCopilotOpen(false)}
-        activeThread={selectedThread}
-        onInsertDraftToComposer={handleInsertDraftToComposer}
-        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Floating Undo Send Grace Window Banner */}
