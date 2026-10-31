@@ -403,7 +403,7 @@ export function MailDisplay({
       setUnsubscribed(true);
       setActionNotice(res.unsubscribeUrl ? 'Unsubscribed & thread auto-archived.' : 'Thread auto-archived.');
       setTimeout(() => setActionNotice(null), 4000);
-      if (res.unsubscribeUrl) {
+      if (res.unsubscribeUrl && /^https?:\/\//i.test(res.unsubscribeUrl)) {
         window.open(res.unsubscribeUrl, '_blank', 'noopener,noreferrer');
       }
     } catch (err: any) {

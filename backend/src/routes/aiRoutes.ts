@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../db.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
 import { AIService } from '../services/aiService.js';
 import { LLMClient } from '../services/llmClient.js';
 import { AgentService } from '../services/agentService.js';
@@ -10,6 +11,7 @@ import { ProposalStatus } from '@prisma/client';
 const router = Router();
 
 router.use(authMiddleware);
+router.use(aiRateLimiter);
 
 // 1. Natural Language Triage Command
 router.post('/triage', async (req: AuthenticatedRequest, res: Response) => {
@@ -226,6 +228,11 @@ router.post('/compose/rewrite', async (req: AuthenticatedRequest, res: Response)
     const { text, style = 'professional' } = req.body;
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
       res.status(400).json({ error: 'Draft text is required for rewriting.' });
+      return;
+    }
+
+    if (text.length > 10000) {
+      res.status(400).json({ error: 'Draft text exceeds maximum allowed length of 10,000 characters.' });
       return;
     }
 

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import prisma from '../db.js';
-import { generateToken, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { generateToken, authMiddleware, AuthenticatedRequest, JWT_SECRET } from '../middleware/auth.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 import { SyncService } from '../services/syncService.js';
 import { ProviderType } from '@prisma/client';
@@ -23,7 +23,7 @@ function generateOAuthState(provider: string): string {
   const nonce = crypto.randomBytes(16).toString('hex');
   const timestamp = Date.now().toString();
   const payload = `${provider}:${nonce}:${timestamp}`;
-  const hmac = crypto.createHmac('sha256', process.env.JWT_SECRET || 'mailr_secret_key_default');
+  const hmac = crypto.createHmac('sha256', JWT_SECRET);
   hmac.update(payload);
   const signature = hmac.digest('hex');
   return `${payload}:${signature}`;
@@ -43,7 +43,7 @@ function verifyOAuthState(state: string | undefined, expectedProvider: string): 
   }
 
   const payload = `${provider}:${nonce}:${timestampStr}`;
-  const hmac = crypto.createHmac('sha256', process.env.JWT_SECRET || 'mailr_secret_key_default');
+  const hmac = crypto.createHmac('sha256', JWT_SECRET);
   hmac.update(payload);
   const expectedSig = hmac.digest('hex');
 

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../db.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
 import { AgentService } from '../services/agentService.js';
 import { LLMClient, AIProvider } from '../services/llmClient.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
@@ -8,13 +9,19 @@ import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 const router = Router();
 
 router.use(authMiddleware);
+router.use(aiRateLimiter);
 
 // 1. Send natural language prompt to AI Copilot
 router.post('/chat', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { prompt, threadId } = req.body;
-    if (!prompt || typeof prompt !== 'string') {
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
       res.status(400).json({ error: 'Prompt is required.' });
+      return;
+    }
+
+    if (prompt.length > 5000) {
+      res.status(400).json({ error: 'Prompt exceeds maximum allowed length of 5,000 characters.' });
       return;
     }
 

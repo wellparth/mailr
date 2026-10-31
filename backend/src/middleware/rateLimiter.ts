@@ -81,3 +81,9 @@ export const apiRateLimiter = createRateLimiter({
   max: 180, // max 180 requests per minute
   message: 'Too many API requests. Please slow down.',
 });
+
+export const aiRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // max 30 AI requests per minute
+  message: 'AI generation rate limit reached. Please wait a minute before making more requests.',
+});

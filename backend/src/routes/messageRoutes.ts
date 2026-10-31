@@ -303,6 +303,32 @@ router.post('/send', async (req: AuthenticatedRequest, res: Response) => {
     // Recipients array
     const recipients = Array.isArray(to) ? to : [to];
 
+    // CRLF Injection & Email format validation
+    if (/[\r\n]/.test(subject)) {
+      res.status(400).json({ error: 'Subject contains invalid newline characters.' });
+      return;
+    }
+
+    const emailRegex = /^[^\s@\r\n]+@[^\s@\r\n]+\.[^\s@\r\n]+$/;
+    for (const r of recipients) {
+      if (typeof r !== 'string' || !emailRegex.test(r.trim()) || /[\r\n]/.test(r)) {
+        res.status(400).json({ error: `Invalid recipient email address format: ${r}` });
+        return;
+      }
+    }
+
+    if (scheduledAt) {
+      const schedTime = new Date(scheduledAt).getTime();
+      if (isNaN(schedTime) || schedTime <= Date.now()) {
+        res.status(400).json({ error: 'Scheduled time must be a valid future timestamp.' });
+        return;
+      }
+      if (schedTime > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+        res.status(400).json({ error: 'Scheduled time cannot be more than 1 year in the future.' });
+        return;
+      }
+    }
+
     // Priority score
     const priority = AIService.calculatePriority(subject, bodyText || bodyHtml || '', account.emailAddress);
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -513,10 +539,24 @@ router.post(['/threads/:id/snooze', '/thread/:id/snooze'], async (req: Authentic
       return;
     }
 
+    let parsedSnooze: Date | null = null;
+    if (snoozedUntil) {
+      const time = new Date(snoozedUntil).getTime();
+      if (isNaN(time) || time <= Date.now()) {
+        res.status(400).json({ error: 'snoozedUntil must be a valid future timestamp.' });
+        return;
+      }
+      if (time > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+        res.status(400).json({ error: 'snoozedUntil cannot be more than 1 year in the future.' });
+        return;
+      }
+      parsedSnooze = new Date(time);
+    }
+
     const updated = await prisma.thread.update({
       where: { id },
       data: {
-        snoozedUntil: snoozedUntil ? new Date(snoozedUntil) : null,
+        snoozedUntil: parsedSnooze,
       },
     });
 
@@ -527,8 +567,8 @@ router.post(['/threads/:id/snooze', '/thread/:id/snooze'], async (req: Authentic
 
     res.json({
       success: true,
-      message: snoozedUntil
-        ? `Thread snoozed until ${new Date(snoozedUntil).toLocaleString()}`
+      message: parsedSnooze
+        ? `Thread snoozed until ${parsedSnooze.toLocaleString()}`
         : 'Thread unsnoozed',
       thread: updated,
     });
@@ -567,6 +607,11 @@ router.post(['/threads/:id/unsubscribe', '/thread/:id/unsubscribe'], async (req:
       if (match) {
         unsubscribeUrl = match[1];
       }
+    }
+
+    // Strictly validate that unsubscribeUrl is an HTTP(S) URL to prevent javascript: or data: schemes
+    if (unsubscribeUrl && !/^https?:\/\//i.test(unsubscribeUrl)) {
+      unsubscribeUrl = null;
     }
 
     // Auto-archive thread & tag as newsletter

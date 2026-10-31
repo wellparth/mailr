@@ -9,6 +9,7 @@ import agentRoutes from './routes/agentRoutes.js';
 
 import { SyncService } from './services/syncService.js';
 import { ScheduledMailService } from './services/scheduledMailService.js';
+import { apiRateLimiter } from './middleware/rateLimiter.js';
 import prisma from './db.js';
 
 const app = express();
@@ -51,6 +52,9 @@ app.get('/api/health', (_req: Request, res: Response) => {
     database: 'MySQL (mailr_dev)',
   });
 });
+
+// Global API rate limiting
+app.use('/api', apiRateLimiter);
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
