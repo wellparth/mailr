@@ -1,5 +1,6 @@
 import prisma from '../db.js';
 import { PriorityLevel } from '@prisma/client';
+import { redis } from './redisClient.js';
 
 export interface ParsedTriageAction {
   intent: 'ARCHIVE' | 'MARK_READ' | 'MARK_UNREAD' | 'FLAG' | 'UNFLAG' | 'SET_PRIORITY' | 'DELETE';
@@ -472,6 +473,14 @@ export class AIService {
     } = {}
   ) {
     const limit = Math.min(Math.max(options.limit || 40, 5), 100);
+    const cacheKey = `mailr:ai:classified:${userId}:${options.categoryFilter || 'all'}:${limit}`;
+
+    try {
+      const cached = await redis.get<any>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    } catch {}
 
     const where: any = {
       account: { userId },
@@ -512,7 +521,7 @@ export class AIService {
     else if (options.categoryFilter === 'notification') filtered = notification;
     else if (options.categoryFilter === 'unnecessary') filtered = unnecessary;
 
-    return {
+    const result = {
       totalScanned: messages.length,
       unnecessaryCount: unnecessary.length,
       breakdown: {
@@ -525,6 +534,12 @@ export class AIService {
       filteredCount: filtered.length,
       emails: filtered,
     };
+
+    try {
+      await redis.set(cacheKey, result, 600); // 10 minutes cache
+    } catch {}
+
+    return result;
   }
 
   /**

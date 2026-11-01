@@ -5,6 +5,7 @@ import { aiRateLimiter } from '../middleware/rateLimiter.js';
 import { AgentService } from '../services/agentService.js';
 import { LLMClient, AIProvider } from '../services/llmClient.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
+import { redis } from '../services/redisClient.js';
 
 const router = Router();
 
@@ -255,6 +256,7 @@ router.get('/byok', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/models', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const providerParam = (req.query.provider as string) || 'nvidia';
+    const forceRefresh = req.query.refresh === 'true';
     const provider = ['openai', 'claude', 'google', 'nvidia'].includes(providerParam.toLowerCase())
       ? (providerParam.toLowerCase() as AIProvider)
       : 'nvidia';
@@ -265,7 +267,7 @@ router.get('/models', async (req: AuthenticatedRequest, res: Response) => {
     });
 
     const userKey = user?.encryptedAiKey ? decryptSecret(user.encryptedAiKey) : undefined;
-    const models = await LLMClient.fetchActiveModels(provider, userKey);
+    const models = await LLMClient.fetchActiveModels(provider, userKey, forceRefresh);
 
     res.json({
       success: true,
@@ -281,13 +283,13 @@ router.get('/models', async (req: AuthenticatedRequest, res: Response) => {
 // 11. Fetch active AI models with custom key before saving
 router.post('/models', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { provider, apiKey } = req.body;
+    const { provider, apiKey, refresh } = req.body;
     if (!provider || !['openai', 'claude', 'google', 'nvidia'].includes(provider.toLowerCase())) {
       res.status(400).json({ error: 'Valid provider is required (openai, claude, google, nvidia).' });
       return;
     }
 
-    const models = await LLMClient.fetchActiveModels(provider.toLowerCase() as AIProvider, apiKey);
+    const models = await LLMClient.fetchActiveModels(provider.toLowerCase() as AIProvider, apiKey, Boolean(refresh));
     res.json({
       success: true,
       provider: provider.toLowerCase(),
@@ -329,6 +331,10 @@ router.post('/byok', async (req: AuthenticatedRequest, res: Response) => {
       where: { id: req.user!.id },
       data: updateData,
     });
+
+    try {
+      await redis.del(`mailr:user:ai_config:${req.user!.id}`);
+    } catch {}
 
     res.json({
       success: true,
@@ -378,6 +384,9 @@ router.post('/emails/batch-clean', async (req: AuthenticatedRequest, res: Respon
   try {
     const { categories, action } = req.body;
     const result = await AgentService.toolBatchCleanUnnecessaryEmails(req.user!.id, { categories, action });
+    try {
+      await redis.delPattern(`mailr:ai:classified:${req.user!.id}:*`);
+    } catch {}
     res.json(result);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Batch clean error';
@@ -396,7 +405,7 @@ router.get('/briefing', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 13. Smart Follow-Up Suggestions
+// 17. Smart Follow-Up Suggestions
 router.get('/follow-ups', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const suggestions = await AgentService.getFollowUpSuggestions(req.user!.id);
@@ -405,6 +414,11 @@ router.get('/follow-ups', async (req: AuthenticatedRequest, res: Response) => {
     const msg = err instanceof Error ? err.message : 'Follow-up suggestions error';
     res.status(500).json({ error: msg });
   }
+});
+
+// 18. Redis Caching & Distributed Bus Status
+router.get('/redis/status', async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, ...redis.getStatus() });
 });
 
 export default router;

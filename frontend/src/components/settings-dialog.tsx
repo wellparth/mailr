@@ -27,6 +27,7 @@ import {
   Bot,
   Link as LinkIcon,
   RefreshCw,
+  Database,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -72,6 +73,7 @@ export function SettingsDialog({
 
   // Status banner
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  const [redisStatus, setRedisStatus] = React.useState<{ connected: boolean; mode: string; redisUrl: string; memoryKeysCount: number } | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -128,6 +130,13 @@ export function SettingsDialog({
             if (cal?.bookingUrl) setCalComUrl(cal.bookingUrl);
             if (cly?.bookingUrl) setCalendlyUrl(cly.bookingUrl);
           }
+        })
+        .catch(() => {});
+
+      // 3. Load Redis Status
+      apiFetch("/api/agent/redis/status")
+        .then((res) => {
+          if (res) setRedisStatus(res);
         })
         .catch(() => {});
 
@@ -625,6 +634,27 @@ export function SettingsDialog({
                   OAuth refresh tokens, IMAP passwords, SMTP secrets, and BYOK AI keys are never stored in plain text.
                   Every credential undergoes an authenticated AES-256-GCM cipher with a unique initialization vector and authentication tag.
                 </p>
+              </div>
+
+              <div className="bg-secondary/40 rounded-xl p-3 border border-border/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-foreground font-medium">
+                    <Database className="h-4 w-4 text-emerald-400" />
+                    <span>Redis & Distributed State Bus</span>
+                  </div>
+                  <Badge variant="outline" className={`text-[10px] ${redisStatus?.connected ? "text-emerald-400 border-emerald-500/40" : "text-sky-400 border-sky-500/40"}`}>
+                    {redisStatus?.mode === "redis" ? "Connected" : "In-Memory Resilient Cache"}
+                  </Badge>
+                </div>
+                <p className="leading-relaxed text-muted-foreground">
+                  Accelerates AI Copilot response times, caches active model matrices, and coordinates real-time agent pub/sub event broadcasting.
+                </p>
+                {redisStatus && (
+                  <div className="pt-1 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/40 font-mono">
+                    <span>Endpoint: <strong className="text-foreground">{redisStatus.redisUrl}</strong></span>
+                    <span>Cached Entries: <strong className="text-foreground">{redisStatus.memoryKeysCount}</strong></span>
+                  </div>
+                )}
               </div>
 
               <div className="bg-secondary/40 rounded-xl p-3 border border-border/50 space-y-2">

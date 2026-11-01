@@ -28,6 +28,9 @@ import {
   ShieldAlert,
   Trash2,
   Archive,
+  Sun,
+  History,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +65,9 @@ interface ChatMessage {
     | "EMAILS_FOUND"
     | "CALENDAR_ALIGNED"
     | "EMAILS_CLASSIFIED"
+    | "BRIEFING_GENERATED"
+    | "FOLLOW_UPS_FOUND"
+    | "CONTACTS_FOUND"
     | "GENERAL_REPLY";
   actionPayload?: any;
   toolSteps?: ToolStep[];
@@ -542,6 +548,24 @@ export function AICopilotDrawer({
             >
               <ShieldAlert className="h-3 w-3 text-purple-400" />
               <span>Clean Promo & Spam</span>
+            </button>
+
+            <button
+              onClick={() => handleSendMessage("Give me my executive morning briefing with today's priorities and schedule")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[11px] font-medium border border-amber-500/30 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Sun className="h-3 w-3 text-amber-400" />
+              <span>Morning Briefing</span>
+            </button>
+
+            <button
+              onClick={() => handleSendMessage("Show follow-up suggestions for sent emails with no reply")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 text-[11px] font-medium border border-sky-500/30 transition-colors whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <History className="h-3 w-3 text-sky-400" />
+              <span>Follow-up Reminders</span>
             </button>
 
             <button
@@ -1149,6 +1173,158 @@ export function AICopilotDrawer({
                             : `Archive All ${msg.actionPayload.classifiedEmails.breakdown.unnecessaryTotal} Unnecessary Emails`}
                         </span>
                       </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 7. Interactive Card: Morning Briefing */}
+                {msg.actionType === "BRIEFING_GENERATED" && msg.actionPayload?.briefing && (
+                  <div className="p-3 bg-secondary/40 border border-amber-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center justify-between font-semibold text-amber-400">
+                      <span className="flex items-center gap-1.5">
+                        <Sun className="h-3.5 w-3.5" />
+                        Executive Daily Briefing
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        {new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+
+                    {/* Urgent Priorities */}
+                    {msg.actionPayload.briefing.urgentPriorities?.length > 0 ? (
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] font-medium text-foreground flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                          Urgent Flags ({msg.actionPayload.briefing.urgentPriorities.length}):
+                        </span>
+                        <div className="divide-y divide-border/30 max-h-36 overflow-y-auto">
+                          {msg.actionPayload.briefing.urgentPriorities.map((item: any) => (
+                            <div
+                              key={item.id}
+                              onClick={() => onSelectThread?.(item.id)}
+                              className={cn(
+                                "py-1 px-1 rounded hover:bg-secondary/60 transition-colors",
+                                onSelectThread && "cursor-pointer group"
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-medium text-foreground truncate max-w-[160px] group-hover:text-amber-300">
+                                  {item.sender}
+                                </span>
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 border-rose-500/30 text-rose-300">
+                                  {item.priorityLevel}
+                                </Badge>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground truncate">{item.subject}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 py-0.5">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span>No urgent flags pending</span>
+                      </div>
+                    )}
+
+                    {/* Today's Meetings */}
+                    {msg.actionPayload.briefing.todaysMeetings?.length > 0 && (
+                      <div className="space-y-1.5 pt-1 border-t border-border/40">
+                        <span className="text-[11px] font-medium text-foreground flex items-center gap-1">
+                          <Calendar className="h-3 w-3 text-sky-400" />
+                          Today's Appointments ({msg.actionPayload.briefing.todaysMeetings.length}):
+                        </span>
+                        <div className="space-y-1">
+                          {msg.actionPayload.briefing.todaysMeetings.map((m: any) => (
+                            <div key={m.id} className="p-1.5 rounded bg-background/50 border border-border/50 text-[11px] flex items-center justify-between">
+                              <span className="truncate font-medium text-foreground">{m.title}</span>
+                              <span className="text-sky-400 font-mono text-[10px] shrink-0 ml-1">
+                                {new Date(m.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 8. Interactive Card: Follow-Up Suggestions */}
+                {msg.actionType === "FOLLOW_UPS_FOUND" && msg.actionPayload?.followUps && (
+                  <div className="p-3 bg-secondary/40 border border-sky-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center justify-between font-semibold text-sky-400">
+                      <span className="flex items-center gap-1.5">
+                        <History className="h-3.5 w-3.5" />
+                        Follow-up Recommendations
+                      </span>
+                      <Badge variant="outline" className="text-[10px] text-sky-400 border-sky-500/30">
+                        {msg.actionPayload.followUps.count} Awaiting Response
+                      </Badge>
+                    </div>
+
+                    <div className="divide-y divide-border/30 max-h-48 overflow-y-auto space-y-1.5 pr-0.5">
+                      {msg.actionPayload.followUps.suggestions?.map((sug: any, i: number) => (
+                        <div key={i} className="pt-1.5 space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-medium text-foreground truncate max-w-[160px]">To: {sug.recipient}</span>
+                            <span className="text-[10px] text-muted-foreground">{sug.daysAgo}d ago</span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate font-medium">Re: {sug.subject}</p>
+                          <div className="p-2 rounded bg-background/60 border border-border/50 text-[10px] text-muted-foreground line-clamp-2 italic">
+                            "{sug.suggestedFollowUp.replace(/\n/g, ' ')}"
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              onInsertDraftToComposer(
+                                sug.suggestedFollowUp,
+                                `Following up: ${sug.subject}`,
+                                sug.recipient
+                              )
+                            }
+                            className="w-full h-6 text-[10px] gap-1 text-sky-300 border-sky-500/30 hover:bg-sky-500/10 cursor-pointer"
+                          >
+                            <Mail className="h-3 w-3" />
+                            <span>Insert Follow-up to Composer</span>
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 9. Interactive Card: Contacts Discovered */}
+                {msg.actionType === "CONTACTS_FOUND" && msg.actionPayload?.contacts && (
+                  <div className="p-3 bg-secondary/40 border border-emerald-500/30 rounded-xl space-y-2 text-xs text-foreground animate-in fade-in">
+                    <div className="flex items-center justify-between font-semibold text-emerald-400">
+                      <span className="flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5" />
+                        Contacts & Address Book
+                      </span>
+                      <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/30">
+                        {msg.actionPayload.contacts.count} found
+                      </Badge>
+                    </div>
+
+                    <div className="divide-y divide-border/30 max-h-44 overflow-y-auto space-y-1">
+                      {msg.actionPayload.contacts.contacts?.map((c: any, i: number) => (
+                        <div key={i} className="py-1 px-1 flex items-center justify-between text-[11px]">
+                          <div className="truncate max-w-[180px]">
+                            <div className="font-medium text-foreground truncate">{c.name}</div>
+                            <div className="text-[10px] text-muted-foreground truncate">{c.email}</div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onInsertDraftToComposer("", "Hello", c.email)}
+                            className="h-6 text-[10px] px-2 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                          >
+                            <Mail className="h-3 w-3 mr-1" />
+                            <span>Email</span>
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

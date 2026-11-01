@@ -4,6 +4,7 @@ import { ProposalStatus } from '@prisma/client';
 import { LLMClient, AIProvider } from './llmClient.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { formatEmailHtml } from '../utils/emailFormatter.js';
+import { redis } from './redisClient.js';
 
 export interface ActionItem {
   task: string;
@@ -56,6 +57,14 @@ export class AgentService {
    * Resolve user BYOK credentials (Nvidia NIM, OpenAI, Claude, or Google Gemini) and preferred model
    */
   static async getUserAIConfig(userId: string): Promise<{ provider: AIProvider; apiKey?: string; model?: string }> {
+    const cacheKey = `mailr:user:ai_config:${userId}`;
+    try {
+      const cached = await redis.get<{ provider: AIProvider; apiKey?: string; model?: string }>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    } catch {}
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { aiProvider: true, aiModel: true, encryptedAiKey: true },
@@ -70,7 +79,13 @@ export class AgentService {
 
     const apiKey = user?.encryptedAiKey ? decryptSecret(user.encryptedAiKey) : undefined;
     const model = user?.aiModel || (provider === 'nvidia' ? (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-bolt-e4b') : undefined);
-    return { provider, apiKey, model };
+    const config = { provider, apiKey, model };
+
+    try {
+      await redis.set(cacheKey, config, 3600);
+    } catch {}
+
+    return config;
   }
 
   /**
@@ -98,6 +113,17 @@ export class AgentService {
     if (!thread || thread.messages.length === 0) {
       throw new Error('Thread not found or has no messages to summarize.');
     }
+
+    const cacheKey = `mailr:ai:notes:${threadId}`;
+    try {
+      const cached = await redis.get<ThreadNotesResult>(cacheKey);
+      if (cached && cached.updatedAt) {
+        const latestMsg = thread.messages[thread.messages.length - 1];
+        if (latestMsg && new Date(latestMsg.receivedAt) <= new Date(cached.updatedAt)) {
+          return cached;
+        }
+      }
+    } catch {}
 
     const messages = thread.messages;
     const cleanSubject = thread.subject.replace(/^(re:\s*|fwd:\s*)/i, '').trim();
@@ -220,7 +246,7 @@ export class AgentService {
       },
     });
 
-    return {
+    const resultNote: ThreadNotesResult = {
       id: savedNote.id,
       threadId: savedNote.threadId,
       title: savedNote.title,
@@ -231,6 +257,12 @@ export class AgentService {
       createdAt: savedNote.createdAt,
       updatedAt: savedNote.updatedAt,
     };
+
+    try {
+      await redis.set(cacheKey, resultNote, 86400); // 24 hours
+    } catch {}
+
+    return resultNote;
   }
 
   /**
@@ -995,8 +1027,8 @@ Return ONLY the drafted response body ready to send.`;
     const classification = await AIService.detectAndClassifyInbox(userId, { limit: 100 });
     const targetCategories = (args.categories || ['promotional', 'spam', 'newsletter', 'notification']).map((c) => c.toUpperCase());
 
-    const matching = classification.emails.filter((e) => targetCategories.includes(e.category));
-    const threadIds = Array.from(new Set(matching.map((e) => e.threadId)));
+    const matching = classification.emails.filter((e: any) => targetCategories.includes(e.category));
+    const threadIds: string[] = Array.from(new Set(matching.map((e: any) => e.threadId as string)));
 
     if (threadIds.length === 0) {
       return { success: true, affectedCount: 0, message: 'No matching promotional or unnecessary emails found.' };
@@ -1027,6 +1059,95 @@ Return ONLY the drafted response body ready to send.`;
       action,
       message: `Successfully cleaned ${threadIds.length} ${targetCategories.join(', ')} thread(s).`,
     };
+  }
+
+  /**
+   * Tool: Check for schedule conflicts for a proposed time window.
+   */
+  static async toolCheckScheduleConflict(
+    userId: string,
+    args: { startTime: string; endTime: string }
+  ) {
+    const start = new Date(args.startTime);
+    let end = new Date(args.endTime);
+    if (isNaN(start.getTime())) {
+      throw new Error('Valid ISO startTime is required.');
+    }
+    if (isNaN(end.getTime()) || end <= start) {
+      end = new Date(start.getTime() + 30 * 60 * 1000);
+    }
+
+    const conflicts = await prisma.calendarProposal.findMany({
+      where: {
+        userId,
+        AND: [
+          { startTime: { lt: end } },
+          { endTime: { gt: start } },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    return {
+      hasConflict: conflicts.length > 0,
+      conflictCount: conflicts.length,
+      conflicts: conflicts.map((c) => ({
+        id: c.id,
+        title: c.title,
+        startTime: c.startTime.toISOString(),
+        endTime: c.endTime.toISOString(),
+      })),
+      slotStatus: conflicts.length > 0 ? 'BUSY / OVERLAPPING' : 'CLEAR / AVAILABLE',
+    };
+  }
+
+  /**
+   * Tool: Search contacts and frequent correspondents across connected accounts.
+   */
+  static async toolSearchContacts(userId: string, args: { query?: string; limit?: number }) {
+    const limit = Math.min(Math.max(args.limit || 10, 1), 30);
+    const whereClause: any = { account: { userId } };
+
+    if (args.query) {
+      whereClause.OR = [
+        { senderName: { contains: args.query } },
+        { senderEmail: { contains: args.query } },
+      ];
+    }
+
+    const messages = await prisma.message.findMany({
+      where: whereClause,
+      select: {
+        senderName: true,
+        senderEmail: true,
+        receivedAt: true,
+      },
+      orderBy: { receivedAt: 'desc' },
+      take: 200,
+    });
+
+    const contactMap = new Map<string, { email: string; name: string; messageCount: number; lastInteraction: string }>();
+    for (const m of messages) {
+      const email = m.senderEmail.toLowerCase();
+      if (!contactMap.has(email)) {
+        contactMap.set(email, {
+          email: m.senderEmail,
+          name: m.senderName || m.senderEmail.split('@')[0],
+          messageCount: 1,
+          lastInteraction: m.receivedAt.toISOString(),
+        });
+      } else {
+        contactMap.get(email)!.messageCount++;
+      }
+    }
+
+    const contacts = Array.from(contactMap.values()).slice(0, limit);
+    return { count: contacts.length, contacts };
   }
 
   /**
@@ -1126,6 +1247,39 @@ Return ONLY the drafted response body ready to send.`;
           summary: res.message,
         };
       }
+      case 'check_schedule_conflict': {
+        const res = await this.toolCheckScheduleConflict(userId, {
+          startTime: args.startTime,
+          endTime: args.endTime,
+        });
+        return {
+          result: res,
+          summary: res.hasConflict
+            ? `Detected ${res.conflictCount} conflict(s) for the requested time window`
+            : `Verified schedule: requested time slot is completely clear`,
+        };
+      }
+      case 'search_contacts': {
+        const res = await this.toolSearchContacts(userId, args);
+        return {
+          result: res,
+          summary: `Searched contacts: found ${res.count} correspondent(s)`,
+        };
+      }
+      case 'get_morning_briefing': {
+        const res = await this.getMorningBriefing(userId);
+        return {
+          result: res,
+          summary: `Compiled morning briefing: ${res.urgentCount} urgent email(s), ${res.meetingsCount} meeting(s), ${res.actionCount} task(s)`,
+        };
+      }
+      case 'get_follow_up_suggestions': {
+        const res = await this.getFollowUpSuggestions(userId);
+        return {
+          result: res,
+          summary: `Analyzed sent emails: identified ${res.count} thread(s) needing follow-up`,
+        };
+      }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1151,6 +1305,9 @@ Return ONLY the drafted response body ready to send.`;
       | 'EMAILS_FOUND'
       | 'CALENDAR_ALIGNED'
       | 'EMAILS_CLASSIFIED'
+      | 'BRIEFING_GENERATED'
+      | 'FOLLOW_UPS_FOUND'
+      | 'CONTACTS_FOUND'
       | 'GENERAL_REPLY';
     actionPayload?: Record<string, unknown>;
     toolSteps?: Array<{ tool: string; summary: string; status: 'completed' | 'failed'; resultPreview?: string }>;
@@ -1178,6 +1335,9 @@ Return ONLY the drafted response body ready to send.`;
       | 'EMAILS_FOUND'
       | 'CALENDAR_ALIGNED'
       | 'EMAILS_CLASSIFIED'
+      | 'BRIEFING_GENERATED'
+      | 'FOLLOW_UPS_FOUND'
+      | 'CONTACTS_FOUND'
       | 'GENERAL_REPLY' = 'GENERAL_REPLY';
     let actionPayload: Record<string, unknown> | undefined;
 
@@ -1199,10 +1359,14 @@ Return ONLY the drafted response body ready to send.`;
           '3. compose_email_draft: Compose an email draft or dispatch email. Args: {"to": string, "subject": string, "body": string, "threadId"?: string, "sendImmediately"?: boolean}',
           '4. list_calendar_events: Check user calendar, view upcoming meetings, and find free/busy time slots. Args: {"startDate"?: string, "endDate"?: string}',
           '5. schedule_calendar_event: Schedule a calendar meeting and align attendee times. Args: {"title": string, "startTime": string (ISO), "endTime": string (ISO), "description"?: string, "attendees"?: string[], "threadId"?: string}',
-          '6. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
-          '7. summarize_thread: Synthesize an email thread into executive notes and action items. Args: {"threadId": string}',
-          '8. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
-          '9. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
+          '6. check_schedule_conflict: Check if a proposed time window has any overlapping events on the calendar. Args: {"startTime": string (ISO), "endTime": string (ISO)}',
+          '7. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
+          '8. summarize_thread: Synthesize an email thread into executive notes and action items. Args: {"threadId": string}',
+          '9. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
+          '10. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
+          '11. get_morning_briefing: Generate an executive daily morning briefing (urgent priorities, today\'s meetings, pending tasks). Args: {}',
+          '12. get_follow_up_suggestions: Scan sent emails with no reply after 3+ days and generate follow-up recommendations. Args: {}',
+          '13. search_contacts: Search address book, frequent correspondents, and email contacts. Args: {"query"?: string, "limit"?: number}',
           '',
           'INSTRUCTIONS:',
           '- You must use tools to inspect real mailbox and calendar data before answering questions.',
@@ -1218,7 +1382,7 @@ Return ONLY the drafted response body ready to send.`;
           '{',
           '  "thought": "All tools completed. Formulating executive final response.",',
           '  "final_response": "Detailed, friendly, professional response to the user explaining what you did and found.",',
-          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"EMAILS_CLASSIFIED"|"GENERAL_REPLY",',
+          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"EMAILS_CLASSIFIED"|"BRIEFING_GENERATED"|"FOLLOW_UPS_FOUND"|"CONTACTS_FOUND"|"GENERAL_REPLY",',
           '  "action_payload": { ... }',
           '}',
         ].join('\n');
@@ -1313,6 +1477,18 @@ Return ONLY the drafted response body ready to send.`;
                 } else if (call.name === 'batch_clean_unnecessary_emails' && executed.result) {
                   actionType = 'TRIAGE_EXECUTED';
                   actionPayload = { triageResult: executed.result };
+                } else if (call.name === 'get_morning_briefing' && executed.result) {
+                  actionType = 'BRIEFING_GENERATED';
+                  actionPayload = { briefing: executed.result };
+                } else if (call.name === 'get_follow_up_suggestions' && executed.result) {
+                  actionType = 'FOLLOW_UPS_FOUND';
+                  actionPayload = { followUps: executed.result };
+                } else if (call.name === 'search_contacts' && executed.result) {
+                  actionType = 'CONTACTS_FOUND';
+                  actionPayload = { contacts: executed.result };
+                } else if (call.name === 'check_schedule_conflict' && executed.result) {
+                  actionType = 'CALENDAR_ALIGNED';
+                  actionPayload = { conflictCheck: executed.result };
                 }
               } catch (toolErr: any) {
                 toolSteps.push({
@@ -1362,8 +1538,51 @@ Return ONLY the drafted response body ready to send.`;
         lower.includes('clean inbox') ||
         lower.includes('clean up');
 
-      // 0. PROMOTIONAL / SPAM / UNNECESSARY EMAIL CLASSIFICATION & TRIAGE
-      if (isClassificationQuery) {
+      // 0a. EXECUTIVE MORNING BRIEFING
+      if (lower.includes('briefing') || lower.includes('morning') || lower.includes('priorities today') || lower.includes('daily overview') || lower.includes('what do i have today')) {
+        const briefing = await this.getMorningBriefing(userId);
+        toolSteps.push({
+          tool: 'get_morning_briefing',
+          summary: `Compiled morning briefing: ${briefing.urgentCount} urgent item(s), ${briefing.meetingsCount} meeting(s), ${briefing.actionCount} task(s)`,
+          status: 'completed',
+        });
+        reply = briefing.summary;
+        actionType = 'BRIEFING_GENERATED';
+        actionPayload = { briefing };
+      }
+      // 0b. SMART FOLLOW-UP SUGGESTIONS
+      else if (lower.includes('follow up') || lower.includes('follow-up') || lower.includes('unanswered') || lower.includes('no reply') || lower.includes('pending reply')) {
+        const followUps = await this.getFollowUpSuggestions(userId);
+        toolSteps.push({
+          tool: 'get_follow_up_suggestions',
+          summary: `Identified ${followUps.count} sent email(s) needing follow-up`,
+          status: 'completed',
+        });
+        if (followUps.count === 0) {
+          reply = `Great news! You have no unanswered emails requiring follow-up right now. All your recent sent messages have been responded to or are within the 48-hour window.`;
+        } else {
+          reply = `I reviewed your sent mail history and found **${followUps.count} email(s)** awaiting response after 3+ days. I have prepared pre-drafted follow-ups you can review and dispatch below:`;
+        }
+        actionType = 'FOLLOW_UPS_FOUND';
+        actionPayload = { followUps };
+      }
+      // 0c. CONTACTS & ADDRESS BOOK SEARCH
+      else if (lower.includes('contact') || lower.includes('address book') || lower.includes('who did i email') || lower.includes('find email of') || lower.includes('find contact')) {
+        const queryTerm = prompt.replace(/(find|search|show|get|contacts|contact|for|email|address book)/gi, '').trim();
+        const contactsRes = await this.toolSearchContacts(userId, { query: queryTerm || undefined, limit: 8 });
+        toolSteps.push({
+          tool: 'search_contacts',
+          summary: `Found ${contactsRes.count} contact(s) matching "${queryTerm || 'all'}"`,
+          status: 'completed',
+        });
+        reply = `I searched your communications history and found **${contactsRes.count} contact(s)**:\n\n` +
+          contactsRes.contacts.map((c) => `• **${c.name}** (<${c.email}>) — ${c.messageCount} message(s), last on ${new Date(c.lastInteraction).toLocaleDateString()}`).join('\n') +
+          `\n\nWould you like me to compose an email to any of these contacts?`;
+        actionType = 'CONTACTS_FOUND';
+        actionPayload = { contacts: contactsRes };
+      }
+      // 0d. PROMOTIONAL / SPAM / UNNECESSARY EMAIL CLASSIFICATION & TRIAGE
+      else if (isClassificationQuery) {
         let catFilter: any = 'unnecessary';
         if (lower.includes('promo') || lower.includes('promotional')) catFilter = 'promotional';
         else if (lower.includes('spam')) catFilter = 'spam';
@@ -1588,6 +1807,16 @@ Return ONLY the drafted response body ready to send.`;
         } as any,
       },
     });
+
+    try {
+      await redis.publish(`mailr:agent:${userId}`, {
+        type: 'agent_turn_completed',
+        actionType,
+        actionPayload,
+        summary: reply.substring(0, 100),
+        timestamp: new Date().toISOString(),
+      });
+    } catch {}
 
     return {
       reply,

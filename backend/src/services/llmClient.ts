@@ -1,3 +1,5 @@
+import { redis } from './redisClient.js';
+
 export type AIProvider = 'openai' | 'claude' | 'google' | 'nvidia';
 
 export interface AIModelOption {
@@ -301,9 +303,37 @@ export class LLMClient {
 
   /**
    * Fetch active, available AI models dynamically from provider APIs.
-   * Supports NVIDIA NIM, OpenAI, Anthropic Claude, and Google Gemini with robust fallbacks.
+   * Leverages Redis caching (1-hour TTL) with fallback to live API fetch or curated model matrix.
    */
-  static async fetchActiveModels(provider: AIProvider, customKey?: string): Promise<AIModelOption[]> {
+  static async fetchActiveModels(provider: AIProvider, customKey?: string, forceRefresh?: boolean): Promise<AIModelOption[]> {
+    const cacheKey = `mailr:ai:models:${provider}:${customKey ? 'custom' : 'default'}`;
+
+    if (!forceRefresh) {
+      try {
+        const cached = await redis.get<AIModelOption[]>(cacheKey);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          return cached;
+        }
+      } catch (err) {
+        console.warn('[LLMClient] Redis cache read warning:', err);
+      }
+    }
+
+    const models = await this.resolveActiveModels(provider, customKey);
+
+    try {
+      await redis.set(cacheKey, models, 3600); // Cache for 1 hour
+    } catch (err) {
+      console.warn('[LLMClient] Redis cache set warning:', err);
+    }
+
+    return models;
+  }
+
+  /**
+   * Internal resolver for active models from provider endpoints.
+   */
+  private static async resolveActiveModels(provider: AIProvider, customKey?: string): Promise<AIModelOption[]> {
     const apiKey = this.resolveApiKey(provider, customKey);
 
     // 1. NVIDIA NIM Models
