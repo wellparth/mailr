@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import prisma from '../db.js';
 import { generateToken, authMiddleware, AuthenticatedRequest, JWT_SECRET } from '../middleware/auth.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
@@ -18,40 +19,75 @@ interface ExchangeCodeData {
 }
 const exchangeCodes = new Map<string, ExchangeCodeData>();
 
-// Helper to generate RFC 6749 compliant HMAC-signed OAuth state parameter
-function generateOAuthState(provider: string): string {
+// Helper to generate RFC 6749 compliant HMAC-signed OAuth state parameter with optional user preservation
+function generateOAuthState(provider: string, userId?: string): string {
   const nonce = crypto.randomBytes(16).toString('hex');
   const timestamp = Date.now().toString();
-  const payload = `${provider}:${nonce}:${timestamp}`;
+  const userSegment = userId ? encodeURIComponent(userId) : 'anonymous';
+  const payload = `${provider}:${nonce}:${timestamp}:${userSegment}`;
   const hmac = crypto.createHmac('sha256', JWT_SECRET);
   hmac.update(payload);
   const signature = hmac.digest('hex');
   return `${payload}:${signature}`;
 }
 
-// Helper to verify OAuth state parameter and prevent CSRF
-function verifyOAuthState(state: string | undefined, expectedProvider: string): boolean {
-  if (!state || typeof state !== 'string') return false;
+// Helper to verify OAuth state parameter, prevent CSRF, and extract target user if connecting accounts
+function verifyOAuthState(
+  state: string | undefined,
+  expectedProvider: string
+): { valid: boolean; userId?: string } {
+  if (!state || typeof state !== 'string') return { valid: false };
   const parts = state.split(':');
-  if (parts.length !== 4) return false;
-  const [provider, nonce, timestampStr, signature] = parts;
-  if (provider !== expectedProvider) return false;
 
-  const timestamp = parseInt(timestampStr, 10);
-  if (isNaN(timestamp) || Date.now() - timestamp > 10 * 60 * 1000) {
-    return false; // Expired after 10 minutes
+  // Support 5-part state (with user context)
+  if (parts.length === 5) {
+    const [provider, nonce, timestampStr, userSegment, signature] = parts;
+    if (provider !== expectedProvider) return { valid: false };
+
+    const timestamp = parseInt(timestampStr, 10);
+    if (isNaN(timestamp) || Date.now() - timestamp > 10 * 60 * 1000) {
+      return { valid: false };
+    }
+
+    const payload = `${provider}:${nonce}:${timestampStr}:${userSegment}`;
+    const hmac = crypto.createHmac('sha256', JWT_SECRET);
+    hmac.update(payload);
+    const expectedSig = hmac.digest('hex');
+
+    try {
+      const valid = crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'));
+      if (!valid) return { valid: false };
+      const userId = userSegment !== 'anonymous' ? decodeURIComponent(userSegment) : undefined;
+      return { valid: true, userId };
+    } catch {
+      return { valid: false };
+    }
   }
 
-  const payload = `${provider}:${nonce}:${timestampStr}`;
-  const hmac = crypto.createHmac('sha256', JWT_SECRET);
-  hmac.update(payload);
-  const expectedSig = hmac.digest('hex');
+  // Support 4-part legacy state
+  if (parts.length === 4) {
+    const [provider, nonce, timestampStr, signature] = parts;
+    if (provider !== expectedProvider) return { valid: false };
 
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'));
-  } catch {
-    return false;
+    const timestamp = parseInt(timestampStr, 10);
+    if (isNaN(timestamp) || Date.now() - timestamp > 10 * 60 * 1000) {
+      return { valid: false };
+    }
+
+    const payload = `${provider}:${nonce}:${timestampStr}`;
+    const hmac = crypto.createHmac('sha256', JWT_SECRET);
+    hmac.update(payload);
+    const expectedSig = hmac.digest('hex');
+
+    try {
+      const valid = crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'));
+      return { valid, userId: undefined };
+    } catch {
+      return { valid: false };
+    }
   }
+
+  return { valid: false };
 }
 
 // 0. Single-use Code Exchange for OAuth callback
@@ -98,6 +134,23 @@ router.get('/google/url', (req: Request, res: Response) => {
     return;
   }
 
+  // Extract current authenticated user if linking an account to an existing profile
+  let currentUserId: string | undefined;
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : (typeof req.query.token === 'string' ? req.query.token : undefined);
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as { id: string; email: string };
+      if (decoded?.id) currentUserId = decoded.id;
+    } catch {}
+  }
+  if (!currentUserId && typeof req.query.userId === 'string') {
+    currentUserId = req.query.userId;
+  }
+
   const scope = [
     'openid',
     'email',
@@ -105,7 +158,7 @@ router.get('/google/url', (req: Request, res: Response) => {
     'https://mail.google.com/',
   ].join(' ');
 
-  const state = generateOAuthState('google');
+  const state = generateOAuthState('google', currentUserId);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -144,11 +197,14 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       return;
     }
 
-    // Verify OAuth CSRF state parameter
-    if (!verifyOAuthState(typeof state === 'string' ? state : undefined, 'google')) {
+    // Verify OAuth CSRF state parameter and extract connected user id if linking account
+    const stateVerification = verifyOAuthState(typeof state === 'string' ? state : undefined, 'google');
+    if (!stateVerification.valid) {
       res.redirect(`${frontendUrl}/login?error=invalid_or_expired_oauth_state`);
       return;
     }
+
+    const targetUserId = stateVerification.userId;
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -193,17 +249,25 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const email = profile.email;
     const name = profile.name || email.split('@')[0];
 
-    // Find or create User
-    let user = await prisma.user.findUnique({ where: { email } });
+    // Find target user if connecting an account to an existing profile session
+    let user: any = null;
+    if (targetUserId) {
+      user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    }
+
+    // Otherwise (new login or register from login page), find or create user for this primary email
     if (!user) {
-      const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
-      user = await prisma.user.create({
-        data: {
-          email,
-          name,
-          passwordHash: randomPassword,
-        },
-      });
+      user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
+        user = await prisma.user.create({
+          data: {
+            email,
+            name,
+            passwordHash: randomPassword,
+          },
+        });
+      }
     }
 
     // Encrypt tokens with AES-256-GCM zero-knowledge encryption
@@ -243,7 +307,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 
     // Auto-trigger initial inbox synchronization immediately in the background
     SyncService.syncAccount(account.id).catch((syncErr) => {
-      console.warn('[Google OAuth] Initial background inbox sync failed:', syncErr);
+      console.warn('[Google OAuth] Initial background inbox sync notice:', syncErr?.message);
     });
 
     const jwtToken = generateToken({ id: user.id, email: user.email });
@@ -281,6 +345,23 @@ router.get('/microsoft/url', (req: Request, res: Response) => {
     return;
   }
 
+  // Extract current authenticated user if linking an account to an existing profile
+  let currentUserId: string | undefined;
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : (typeof req.query.token === 'string' ? req.query.token : undefined);
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as { id: string; email: string };
+      if (decoded?.id) currentUserId = decoded.id;
+    } catch {}
+  }
+  if (!currentUserId && typeof req.query.userId === 'string') {
+    currentUserId = req.query.userId;
+  }
+
   const scope = [
     'openid',
     'profile',
@@ -290,7 +371,7 @@ router.get('/microsoft/url', (req: Request, res: Response) => {
     'https://graph.microsoft.com/Mail.Send',
   ].join(' ');
 
-  const state = generateOAuthState('microsoft');
+  const state = generateOAuthState('microsoft', currentUserId);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -328,11 +409,14 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       return;
     }
 
-    // Verify OAuth CSRF state parameter
-    if (!verifyOAuthState(typeof state === 'string' ? state : undefined, 'microsoft')) {
+    // Verify OAuth CSRF state parameter and extract connected user id if linking account
+    const stateVerification = verifyOAuthState(typeof state === 'string' ? state : undefined, 'microsoft');
+    if (!stateVerification.valid) {
       res.redirect(`${frontendUrl}/login?error=invalid_or_expired_oauth_state`);
       return;
     }
+
+    const targetUserId = stateVerification.userId;
 
     const clientId = process.env.MICROSOFT_CLIENT_ID;
     const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
@@ -377,17 +461,25 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
     const email = profile.mail || profile.userPrincipalName;
     const name = profile.displayName || email.split('@')[0];
 
-    // Find or create User
-    let user = await prisma.user.findUnique({ where: { email } });
+    // Find target user if connecting an account to an existing profile session
+    let user: any = null;
+    if (targetUserId) {
+      user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    }
+
+    // Otherwise (new login or register from login page), find or create user for this primary email
     if (!user) {
-      const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
-      user = await prisma.user.create({
-        data: {
-          email,
-          name,
-          passwordHash: randomPassword,
-        },
-      });
+      user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
+        user = await prisma.user.create({
+          data: {
+            email,
+            name,
+            passwordHash: randomPassword,
+          },
+        });
+      }
     }
 
     // Encrypt tokens with AES-256-GCM zero-knowledge encryption

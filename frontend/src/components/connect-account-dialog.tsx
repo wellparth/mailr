@@ -20,7 +20,7 @@ import {
   ExternalLink,
   Lock,
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getAuthToken } from "@/lib/api";
 
 interface ConnectAccountDialogProps {
   open: boolean;
@@ -48,14 +48,32 @@ export function ConnectAccountDialog({
   const [saving, setSaving] = React.useState(false);
   const [useManualPassword, setUseManualPassword] = React.useState(false);
 
-  // Direct Google OAuth authorization trigger
+  // Direct Google OAuth authorization trigger with existing user context preservation
   const handleGoogleOAuthDirect = async () => {
     try {
-      const res = await apiFetch<{ configured: boolean; url: string | null; message?: string }>('/auth/google/url');
+      const token = getAuthToken();
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
+      const res = await apiFetch<{ configured: boolean; url: string | null; message?: string }>(`/auth/google/url${query}`);
       if (res && res.configured && res.url) {
         window.location.href = res.url;
       } else {
         alert(res?.message || 'Google OAuth is not configured in backend .env.');
+      }
+    } catch (err: any) {
+      alert('OAuth initialization error: ' + err.message);
+    }
+  };
+
+  // Direct Microsoft Outlook OAuth authorization trigger with existing user context preservation
+  const handleMicrosoftOAuthDirect = async () => {
+    try {
+      const token = getAuthToken();
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
+      const res = await apiFetch<{ configured: boolean; url: string | null; message?: string }>(`/auth/microsoft/url${query}`);
+      if (res && res.configured && res.url) {
+        window.location.href = res.url;
+      } else {
+        alert(res?.message || 'Microsoft OAuth is not configured in backend .env.');
       }
     } catch (err: any) {
       alert('OAuth initialization error: ' + err.message);
