@@ -79,8 +79,8 @@ app.listen(PORT, () => {
   // Start Scheduled Mail Worker
   ScheduledMailService.start(30000);
 
-  // Start periodic background sync worker (polls active accounts every 3 minutes)
-  const SYNC_INTERVAL_MS = 3 * 60 * 1000;
+  // Start periodic background sync worker (polls active accounts; default: 45s, configurable via SYNC_INTERVAL_MS)
+  const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS || '45000', 10);
   let isSyncing = false;
 
   setInterval(async () => {

@@ -16,7 +16,7 @@ import { MorningBriefingDialog } from "@/components/morning-briefing-dialog";
 import { Button } from "@/components/ui/button";
 import { Sparkles, CheckCircle2, PenSquare, RotateCcw, Clock, Calendar, SunMedium, Keyboard, Inbox, Send, FileText, Trash2, Archive, Bot, Star, RefreshCw, Settings, PanelLeft, PanelLeftClose, PanelLeftOpen, Columns } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiFetch, getAuthToken, removeAuthToken } from "@/lib/api";
+import { apiFetch, getAuthToken, removeAuthToken, API_BASE_URL } from "@/lib/api";
 
 export default function AppMailPage() {
   const router = useRouter();
@@ -115,6 +115,10 @@ export default function AppMailPage() {
   // AI Triage state
   const [triageRunning, setTriageRunning] = React.useState(false);
   const [isSyncing, setIsSyncing] = React.useState(false);
+  const isSyncingRef = React.useRef(false);
+  React.useEffect(() => {
+    isSyncingRef.current = isSyncing;
+  }, [isSyncing]);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
 
   // Pagination state
@@ -268,7 +272,14 @@ export default function AppMailPage() {
     }
   }, [fetchData]);
 
-  // SSE Real-time Live Stream
+  // Prompt for desktop notifications on initial mount if supported
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  // SSE Real-time Live Stream: Incoming emails appear directly in the client
   React.useEffect(() => {
     fetchData();
 
@@ -278,6 +289,45 @@ export default function AppMailPage() {
     let eventSource: EventSource | null = null;
     let isMounted = true;
 
+    const rawBase = (process.env.NEXT_PUBLIC_API_URL || API_BASE_URL || "http://localhost:5000/api").replace(/\/+$/, "");
+    const streamBase = rawBase.endsWith("/api") ? `${rawBase}/messages/stream` : `${rawBase}/api/messages/stream`;
+
+    const handleEventMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "EMAIL_RECEIVED") {
+          const sender = data.senderName || data.senderEmail || "Unknown Sender";
+          const subj = data.subject || "(No Subject)";
+          showToast(`📬 New email from ${sender}: "${subj}"`);
+
+          // Native desktop notification if permitted
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            try {
+              new Notification(`New Email: ${sender}`, {
+                body: subj,
+                icon: "/favicon.ico",
+              });
+            } catch {}
+          }
+
+          // Directly refresh inbox so the new email appears immediately at the top
+          fetchData();
+        } else if (data.type === "SYNC_PROGRESS") {
+          if (data.ingestedCount > 0 && isSyncingRef.current) {
+            showToast(`Syncing: ${data.ingestedCount} emails processed...`);
+          }
+        } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
+          if (data.ingestedCount > 0) {
+            showToast(`📬 Received ${data.ingestedCount} new email(s)!`);
+            fetchData();
+          } else if (isSyncingRef.current) {
+            showToast("Mailboxes up to date.");
+          }
+        }
+      } catch (e) {}
+    };
+
     // Use short-lived stream ticket instead of exposing primary JWT in GET URL
     apiFetch<{ success: boolean; ticket: string }>("/api/messages/stream/ticket", {
       method: "POST",
@@ -285,43 +335,40 @@ export default function AppMailPage() {
       .then((res) => {
         if (!isMounted) return;
         const streamUrl = res?.ticket
-          ? `http://localhost:5000/api/messages/stream?ticket=${encodeURIComponent(res.ticket)}`
-          : `http://localhost:5000/api/messages/stream?token=${encodeURIComponent(token)}`;
+          ? `${streamBase}?ticket=${encodeURIComponent(res.ticket)}`
+          : `${streamBase}?token=${encodeURIComponent(token)}`;
 
         eventSource = new EventSource(streamUrl);
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === "SYNC_PROGRESS") {
-              showToast(`Syncing: ${data.ingestedCount} emails processed...`);
-            } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
-              showToast(`Sync complete! Ingested ${data.ingestedCount || "new"} emails.`);
-              fetchData();
-            }
-          } catch (e) {}
-        };
+        eventSource.onmessage = handleEventMessage;
       })
       .catch(() => {
         if (!isMounted) return;
         try {
-          eventSource = new EventSource(`http://localhost:5000/api/messages/stream?token=${encodeURIComponent(token)}`);
-          eventSource.onmessage = (event) => {
-            try {
-              const data = JSON.parse(event.data);
-              if (data.type === "SYNC_PROGRESS") {
-                showToast(`Syncing: ${data.ingestedCount} emails processed...`);
-              } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
-                showToast(`Sync complete! Ingested ${data.ingestedCount || "new"} emails.`);
-                fetchData();
-              }
-            } catch (e) {}
-          };
+          eventSource = new EventSource(`${streamBase}?token=${encodeURIComponent(token)}`);
+          eventSource.onmessage = handleEventMessage;
         } catch (err) {}
       });
+
+    // Automatic silent sync when user returns or focuses the window/tab
+    let lastFocusCheck = Date.now();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        const now = Date.now();
+        if (now - lastFocusCheck > 30000) {
+          lastFocusCheck = now;
+          fetchData();
+          apiFetch("/api/accounts/sync", { method: "POST" }).catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
 
     return () => {
       isMounted = false;
       if (eventSource) eventSource.close();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
     };
   }, [fetchData]);
 

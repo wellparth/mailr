@@ -8,6 +8,7 @@ import { OutlookAdapter } from '../adapters/OutlookAdapter.js';
 import { AIService } from './aiService.js';
 import { NormalizedMessage, IEmailAdapter, SyncOptions } from '../adapters/EmailAdapter.js';
 import { ProviderType } from '@prisma/client';
+import { redis } from './redisClient.js';
 
 class SyncBroadcaster extends EventEmitter {
   private clients: Map<string, Response[]> = new Map();
@@ -285,6 +286,34 @@ export class SyncService {
           });
 
           ingestedCount++;
+
+          // Real-time notification: Push incoming email directly to connected web clients
+          syncBroadcaster.notifyUser(account.userId, 'EMAIL_RECEIVED', {
+            accountId: account.id,
+            threadId: thread.id,
+            messageId: created.id,
+            senderName: msg.senderName,
+            senderEmail: msg.senderEmail,
+            subject: msg.subject,
+            snippet: msg.snippet,
+            priorityLevel: thread.priorityLevel,
+            priorityScore: thread.priorityScore,
+            receivedAt: msg.receivedAt,
+          });
+
+          try {
+            await redis.publish(`mailr:user:${account.userId}:emails`, {
+              type: 'EMAIL_RECEIVED',
+              accountId: account.id,
+              threadId: thread.id,
+              messageId: created.id,
+              senderName: msg.senderName,
+              senderEmail: msg.senderEmail,
+              subject: msg.subject,
+              snippet: msg.snippet,
+              receivedAt: msg.receivedAt,
+            });
+          } catch {}
         }
 
         // Notify client of progress after each batch
