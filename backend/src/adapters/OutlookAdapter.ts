@@ -64,6 +64,23 @@ export class OutlookAdapter implements IEmailAdapter {
     // DELETE /me/messages/{id}
   }
 
+  async getAttachment(remoteMessageId: string, attachmentId: string): Promise<{ data: Buffer; contentType: string } | null> {
+    if (!this.accessToken) return null;
+    try {
+      const res = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${remoteMessageId}/attachments/${attachmentId}/$value`, {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      if (!res.ok) return null;
+      const arrayBuffer = await res.arrayBuffer();
+      return {
+        data: Buffer.from(arrayBuffer),
+        contentType: res.headers.get('content-type') || 'application/octet-stream',
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async disconnect(): Promise<void> {
     // Clear sessions
   }

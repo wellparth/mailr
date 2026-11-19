@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getAuthToken } from "@/lib/api";
 import DOMPurify from "dompurify";
 
 // Helper to sanitize incoming email HTML securely against Stored XSS
@@ -335,6 +335,28 @@ export function MailDisplay({
   const latestMessage = thread.messages[0];
   const proposals = latestMessage?.calendarProposals || [];
   const attachments = latestMessage?.attachments || [];
+  const [downloadingAttId, setDownloadingAttId] = React.useState<string | null>(null);
+
+  const handleDownloadAttachment = (att: AttachmentItem) => {
+    try {
+      setDownloadingAttId(att.id);
+      const token = getAuthToken();
+      const baseUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
+      const finalBase = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`;
+      const downloadUrl = `${finalBase}/messages/attachment/${att.id}/download${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", att.filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      alert("Failed to initiate download: " + (err.message || "Unknown error"));
+    } finally {
+      setTimeout(() => setDownloadingAttId(null), 2000);
+    }
+  };
 
   // Generate Notes on demand
   const handleGenerateNotes = async () => {
@@ -1181,14 +1203,23 @@ export function MailDisplay({
         {/* Multiple Images / Attachments Gallery Section */}
         {attachments.length > 0 && (
           <div className="pt-4 border-t border-border/40 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-              <Paperclip className="h-4 w-4 text-sky-400" />
-              <span>Attachments & Images ({attachments.length})</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                <Paperclip className="h-4 w-4 text-sky-400" />
+                <span>Attachments &amp; Files ({attachments.length})</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">
+                Bypassed during sync &bull; Downloaded on-demand from origin mail provider
+              </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {attachments.map((att) => {
-                const isImage = att.contentType.startsWith("image/");
+                const isImage = att.contentType.startsWith("image/") && att.filePath && att.filePath.startsWith("data:");
+                const isPdf = att.contentType.includes("pdf") || att.filename.toLowerCase().endsWith(".pdf");
+                const isZip = att.contentType.includes("zip") || att.contentType.includes("tar") || att.contentType.includes("compressed") || att.filename.toLowerCase().endsWith(".zip") || att.filename.toLowerCase().endsWith(".rar");
+                const isDownloading = downloadingAttId === att.id;
+
                 return (
                   <div
                     key={att.id}
@@ -1209,8 +1240,17 @@ export function MailDisplay({
                         </div>
                       </div>
                     ) : (
-                      <div className="h-24 w-full rounded-lg bg-card/60 flex items-center justify-center text-muted-foreground mb-2">
-                        <Paperclip className="h-6 w-6" />
+                      <div className="h-24 w-full rounded-lg bg-card/60 flex flex-col items-center justify-center gap-1 text-muted-foreground mb-2 p-2">
+                        {isPdf ? (
+                          <FileText className="h-8 w-8 text-rose-400" />
+                        ) : isZip ? (
+                          <Archive className="h-8 w-8 text-amber-400" />
+                        ) : (
+                          <Paperclip className="h-8 w-8 text-sky-400" />
+                        )}
+                        <span className="text-[9px] uppercase font-mono tracking-wider font-semibold text-muted-foreground truncate max-w-full">
+                          {att.filename.split(".").pop() || "FILE"}
+                        </span>
                       </div>
                     )}
 
@@ -1219,18 +1259,30 @@ export function MailDisplay({
                         {att.filename}
                       </p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {(att.sizeBytes / 1024).toFixed(1)} KB
+                        {att.sizeBytes > 1048576
+                          ? `${(att.sizeBytes / 1048576).toFixed(2)} MB`
+                          : `${(att.sizeBytes / 1024).toFixed(1)} KB`}
                       </p>
                     </div>
 
-                    <a
-                      href={att.filePath}
-                      download={att.filename}
-                      className="mt-2 text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium"
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadAttachment(att)}
+                      disabled={isDownloading}
+                      className="mt-2 text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-medium transition-colors cursor-pointer disabled:opacity-60"
                     >
-                      <Download className="h-3 w-3" />
-                      <span>Download</span>
-                    </a>
+                      {isDownloading ? (
+                        <>
+                          <RefreshCw className="h-3 w-3 animate-spin text-sky-400" />
+                          <span>Fetching...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-3 w-3" />
+                          <span>Download</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 );
               })}

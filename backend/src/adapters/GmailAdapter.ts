@@ -467,6 +467,28 @@ export class GmailAdapter implements IEmailAdapter {
     });
   }
 
+  /**
+   * On-demand download of attachment directly from Gmail origin API.
+   * Avoids downloading heavy binaries during inbox sync.
+   */
+  async getAttachment(remoteMessageId: string, attachmentId: string): Promise<{ data: Buffer; contentType: string } | null> {
+    const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${remoteMessageId}/attachments/${attachmentId}`;
+    const res = await this.authenticatedFetch(url);
+    if (!res.ok) {
+      console.warn(`[GmailAdapter] Failed to fetch attachment ${attachmentId}: HTTP ${res.status}`);
+      return null;
+    }
+    const json = (await res.json()) as any;
+    if (!json.data) return null;
+    // Gmail API returns base64url encoded string
+    const base64 = json.data.replace(/-/g, '+').replace(/_/g, '/');
+    const buffer = Buffer.from(base64, 'base64');
+    return {
+      data: buffer,
+      contentType: 'application/octet-stream',
+    };
+  }
+
   async disconnect(): Promise<void> {
     // No-op for REST stateless connection
   }

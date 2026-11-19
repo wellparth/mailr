@@ -66,5 +66,6 @@ export interface IEmailAdapter {
   markAsRead(remoteMessageId: string, isRead: boolean): Promise<void>;
   archiveMessage(remoteMessageId: string): Promise<void>;
   deleteMessage(remoteMessageId: string): Promise<void>;
+  getAttachment?(remoteMessageId: string, attachmentId: string, filename?: string): Promise<{ data: Buffer; contentType: string } | null>;
   disconnect(): Promise<void>;
 }

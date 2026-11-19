@@ -336,6 +336,50 @@ export class ImapSmtpAdapter implements IEmailAdapter {
     }
   }
 
+  /**
+   * On-demand download of an attachment from IMAP mail server.
+   */
+  async getAttachment(remoteMessageId: string, attachmentId: string, filename?: string): Promise<{ data: Buffer; contentType: string } | null> {
+    if (!this.imapClient) await this.connect();
+    if (!this.imapClient) return null;
+
+    try {
+      await this.imapClient.connect();
+    } catch {}
+
+    const lock = await this.imapClient.getMailboxLock('INBOX');
+    try {
+      const uid = Number(remoteMessageId);
+      if (isNaN(uid)) return null;
+
+      const msg = await this.imapClient.fetchOne(uid, { source: true }, { uid: true });
+      if (!msg || !msg.source) return null;
+
+      const parsed: ParsedMail = await simpleParser(msg.source);
+      if (!parsed.attachments || parsed.attachments.length === 0) return null;
+
+      // Find attachment by filename or index
+      let target = parsed.attachments.find((att) => att.filename === filename);
+      if (!target && !isNaN(Number(attachmentId))) {
+        const idx = Number(attachmentId) - 1;
+        target = parsed.attachments[idx];
+      }
+      if (!target && parsed.attachments.length > 0) {
+        target = parsed.attachments[0];
+      }
+
+      if (target && target.content) {
+        return {
+          data: target.content,
+          contentType: target.contentType || 'application/octet-stream',
+        };
+      }
+      return null;
+    } finally {
+      lock.release();
+    }
+  }
+
   async disconnect(): Promise<void> {
     if (this.imapClient) {
       try {

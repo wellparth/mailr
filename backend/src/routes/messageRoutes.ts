@@ -693,4 +693,112 @@ router.post(['/threads/:id/unsubscribe', '/thread/:id/unsubscribe'], async (req:
   }
 });
 
+// 12. On-demand download of email attachment directly from mail provider
+router.get(['/:messageId/attachments/:attachmentId/download', '/attachment/:attachmentId/download'], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { attachmentId } = req.params;
+
+    // Support query token for direct download links or bearer auth
+    let userId = req.user?.id;
+    if (!userId && req.query.token && typeof req.query.token === 'string') {
+      try {
+        const jwt = (await import('jsonwebtoken')).default;
+        const decoded = jwt.verify(req.query.token, process.env.JWT_SECRET || 'mailr_secret_key_default') as { id: string };
+        userId = decoded.id;
+      } catch {}
+    }
+
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const attachment = await prisma.attachment.findFirst({
+      where: {
+        id: attachmentId,
+        message: {
+          account: { userId },
+        },
+      },
+      include: {
+        message: {
+          include: {
+            account: true,
+          },
+        },
+      },
+    });
+
+    if (!attachment) {
+      res.status(404).json({ error: 'Attachment not found' });
+      return;
+    }
+
+    // Check if attachment is already a data URI (e.g. small inline preview)
+    if (attachment.filePath && attachment.filePath.startsWith('data:')) {
+      const match = attachment.filePath.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        const contentType = match[1];
+        const buffer = Buffer.from(match[2], 'base64');
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.filename)}"`);
+        res.setHeader('Content-Length', buffer.length);
+        res.send(buffer);
+        return;
+      }
+    }
+
+    // Check local VPS disk cache
+    const pathMod = await import('path');
+    const fsMod = await import('fs');
+    const cacheDir = pathMod.join(process.cwd(), 'uploads', 'attachments');
+    const safeFilename = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cachedFilePath = pathMod.join(cacheDir, `${attachment.id}-${safeFilename}`);
+
+    if (fsMod.existsSync(cachedFilePath)) {
+      res.setHeader('Content-Type', attachment.contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.filename)}"`);
+      const fileStream = fsMod.createReadStream(cachedFilePath);
+      fileStream.pipe(res);
+      return;
+    }
+
+    // Fetch on-demand from origin mail provider (Gmail, Outlook, IMAP)
+    const account = attachment.message.account;
+    const adapter = await SyncService.getAdapterForAccount(account);
+
+    if (!adapter.getAttachment) {
+      res.status(501).json({ error: 'Origin provider does not support on-demand attachment fetching' });
+      return;
+    }
+
+    const result = await adapter.getAttachment(
+      attachment.message.remoteMessageId,
+      attachment.filePath || attachment.id,
+      attachment.filename
+    );
+
+    if (!result || !result.data) {
+      res.status(404).json({ error: 'File could not be retrieved from origin mail provider' });
+      return;
+    }
+
+    // Cache to local VPS disk for subsequent instantaneous access
+    try {
+      await fsMod.promises.mkdir(cacheDir, { recursive: true });
+      await fsMod.promises.writeFile(cachedFilePath, result.data);
+    } catch (cacheErr) {
+      console.warn('Failed to write attachment to disk cache:', cacheErr);
+    }
+
+    res.setHeader('Content-Type', attachment.contentType || result.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.filename)}"`);
+    res.setHeader('Content-Length', result.data.length);
+    res.send(result.data);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Download error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 export default router;
