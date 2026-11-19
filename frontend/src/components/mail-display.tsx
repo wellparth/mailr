@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { apiFetch, getAuthToken } from "@/lib/api";
+import { SandboxedEmailBody } from "@/components/sandboxed-email-body";
 import DOMPurify from "dompurify";
 
 // Helper to sanitize incoming email HTML securely against Stored XSS
@@ -1186,18 +1187,12 @@ export function MailDisplay({
           </div>
         )}
 
-        {/* Email Message Content */}
-        <div className="prose prose-invert max-w-none text-sm text-foreground/90 leading-relaxed font-sans space-y-4 break-words">
-          {latestMessage?.bodyHtml ? (
-            <div
-              className="email-body-content overflow-x-auto max-w-full bg-card/20 p-4 rounded-xl border border-border/30 break-words"
-              dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(latestMessage.bodyHtml) }}
-            />
-          ) : (
-            <div className="whitespace-pre-wrap font-sans text-sm bg-card/20 p-4 rounded-xl border border-border/30 break-words">
-              {latestMessage?.bodyText || latestMessage?.snippet || "No text body available."}
-            </div>
-          )}
+        {/* Email Message Content (Isolated Sandboxed Iframe Viewer) */}
+        <div className="space-y-4">
+          <SandboxedEmailBody
+            html={latestMessage?.bodyHtml || ""}
+            fallbackText={latestMessage?.bodyText || latestMessage?.snippet || "No text body available."}
+          />
         </div>
 
         {/* Multiple Images / Attachments Gallery Section */}
