@@ -75,6 +75,19 @@ export function SettingsDialog({
   const [discordWebhookUrl, setDiscordWebhookUrl] = React.useState("");
   const [hasDiscordWebhook, setHasDiscordWebhook] = React.useState(false);
   const [discordMasked, setDiscordMasked] = React.useState<string | null>(null);
+
+  const [slackWebhookUrl, setSlackWebhookUrl] = React.useState("");
+  const [hasSlackWebhook, setHasSlackWebhook] = React.useState(false);
+  const [slackMasked, setSlackMasked] = React.useState<string | null>(null);
+  const [testingSlack, setTestingSlack] = React.useState(false);
+  const [slackTestResult, setSlackTestResult] = React.useState<{ success: boolean; message: string } | null>(null);
+
+  const [customWebhookUrl, setCustomWebhookUrl] = React.useState("");
+  const [hasCustomWebhook, setHasCustomWebhook] = React.useState(false);
+  const [customMasked, setCustomMasked] = React.useState<string | null>(null);
+  const [testingCustom, setTestingCustom] = React.useState(false);
+  const [customTestResult, setCustomTestResult] = React.useState<{ success: boolean; message: string } | null>(null);
+
   const [savingAlerts, setSavingAlerts] = React.useState(false);
   const [testingTelegram, setTestingTelegram] = React.useState(false);
   const [testingDiscord, setTestingDiscord] = React.useState(false);
@@ -179,6 +192,10 @@ export function SettingsDialog({
             setHasTelegramToken(Boolean(res.hasTelegramToken));
             setHasDiscordWebhook(Boolean(res.hasDiscordWebhook));
             setDiscordMasked(res.discordWebhookUrlMasked || null);
+            setHasSlackWebhook(Boolean(res.hasSlackWebhook));
+            setSlackMasked(res.slackWebhookUrlMasked || null);
+            setHasCustomWebhook(Boolean(res.hasCustomWebhook));
+            setCustomMasked(res.customWebhookUrlMasked || null);
           }
         })
         .catch(() => {});
@@ -301,20 +318,64 @@ export function SettingsDialog({
           telegramBotToken: telegramBotToken || undefined,
           telegramChatId,
           discordWebhookUrl: discordWebhookUrl || undefined,
+          slackWebhookUrl: slackWebhookUrl || undefined,
+          customWebhookUrl: customWebhookUrl || undefined,
         }),
       });
 
       if (res && res.success) {
         setHasTelegramToken(Boolean(res.hasTelegramToken));
         setHasDiscordWebhook(Boolean(res.hasDiscordWebhook));
+        setHasSlackWebhook(Boolean(res.hasSlackWebhook));
+        setHasCustomWebhook(Boolean(res.hasCustomWebhook));
         if (telegramBotToken) setTelegramBotToken("");
         if (discordWebhookUrl) setDiscordWebhookUrl("");
+        if (slackWebhookUrl) setSlackWebhookUrl("");
+        if (customWebhookUrl) setCustomWebhookUrl("");
         showToast("Urgent alert preferences saved successfully!");
       }
     } catch (err: any) {
       showToast(err.message || "Failed to save alert settings");
     } finally {
       setSavingAlerts(false);
+    }
+  };
+
+  const handleTestSlack = async () => {
+    try {
+      setTestingSlack(true);
+      setSlackTestResult(null);
+      const res = await apiFetch<{ success: boolean; message: string }>("/api/alerts/test", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "slack",
+          slackWebhookUrl: slackWebhookUrl || undefined,
+        }),
+      });
+      setSlackTestResult(res);
+    } catch (err: any) {
+      setSlackTestResult({ success: false, message: err.message || "Test failed" });
+    } finally {
+      setTestingSlack(false);
+    }
+  };
+
+  const handleTestCustom = async () => {
+    try {
+      setTestingCustom(true);
+      setCustomTestResult(null);
+      const res = await apiFetch<{ success: boolean; message: string }>("/api/alerts/test", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "custom",
+          customWebhookUrl: customWebhookUrl || undefined,
+        }),
+      });
+      setCustomTestResult(res);
+    } catch (err: any) {
+      setCustomTestResult({ success: false, message: err.message || "Test failed" });
+    } finally {
+      setTestingCustom(false);
     }
   };
 
@@ -1021,6 +1082,114 @@ export function SettingsDialog({
                     className="text-xs h-7 gap-1.5 border-border hover:bg-secondary cursor-pointer"
                   >
                     <span>{testingDiscord ? "Testing..." : "Test Discord Ping"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Slack Webhook Section */}
+              <div className="p-3.5 rounded-xl bg-secondary/20 border border-border/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground flex items-center gap-2 text-xs">
+                        <span>Slack Channel Webhook</span>
+                        {hasSlackWebhook && (
+                          <Badge variant="outline" className="text-[9px] text-emerald-400 border-emerald-500/30">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Post instant agent alerts to your private or team Slack workspace.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">Slack Webhook URL</Label>
+                  <Input
+                    type="password"
+                    value={slackWebhookUrl}
+                    onChange={(e) => setSlackWebhookUrl(e.target.value)}
+                    placeholder={hasSlackWebhook ? (slackMasked || "•••••••••••• (Leave blank to keep)") : "https://hooks.slack.com/services/..."}
+                    className="h-8 text-xs bg-secondary/40 border-border font-mono"
+                  />
+                  <p className="text-[9px] text-muted-foreground">Created via Slack API App &gt; Incoming Webhooks</p>
+                </div>
+
+                {slackTestResult && (
+                  <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${slackTestResult.success ? "bg-emerald-950/60 text-emerald-300 border border-emerald-500/30" : "bg-red-950/60 text-red-300 border border-red-500/30"}`}>
+                    {slackTestResult.success ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400" />}
+                    <span>{slackTestResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestSlack}
+                    disabled={testingSlack || (!slackWebhookUrl && !hasSlackWebhook)}
+                    className="text-xs h-7 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                  >
+                    <span>{testingSlack ? "Testing..." : "Test Slack Ping"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* WhatsApp / Mobile Push Webhook Section */}
+              <div className="p-3.5 rounded-xl bg-secondary/20 border border-border/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-green-500/15 text-green-400">
+                      <Bell className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground flex items-center gap-2 text-xs">
+                        <span>WhatsApp & Mobile Push Webhook</span>
+                        {hasCustomWebhook && (
+                          <Badge variant="outline" className="text-[9px] text-emerald-400 border-emerald-500/30">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Dispatch alerts directly to WhatsApp (Twilio/Meta gateway), Pushover, ntfy.sh, or generic mobile webhook.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">Webhook / WhatsApp Gateway Endpoint URL</Label>
+                  <Input
+                    type="password"
+                    value={customWebhookUrl}
+                    onChange={(e) => setCustomWebhookUrl(e.target.value)}
+                    placeholder={hasCustomWebhook ? (customMasked || "•••••••••••• (Leave blank to keep)") : "https://ntfy.sh/my-topic OR https://api.pushover.net/..."}
+                    className="h-8 text-xs bg-secondary/40 border-border font-mono"
+                  />
+                  <p className="text-[9px] text-muted-foreground">Receives POST JSON: <code>&#123; title, message, priority, url &#125;</code> for instant mobile delivery</p>
+                </div>
+
+                {customTestResult && (
+                  <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${customTestResult.success ? "bg-emerald-950/60 text-emerald-300 border border-emerald-500/30" : "bg-red-950/60 text-red-300 border border-red-500/30"}`}>
+                    {customTestResult.success ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400" />}
+                    <span>{customTestResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestCustom}
+                    disabled={testingCustom || (!customWebhookUrl && !hasCustomWebhook)}
+                    className="text-xs h-7 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                  >
+                    <span>{testingCustom ? "Testing..." : "Test Mobile Ping"}</span>
                   </Button>
                 </div>
               </div>

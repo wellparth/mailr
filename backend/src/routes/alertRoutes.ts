@@ -18,6 +18,9 @@ router.get('/config', async (req: AuthenticatedRequest, res: Response) => {
         telegramBotToken: true,
         telegramChatId: true,
         discordWebhookUrl: true,
+        slackWebhookUrl: true,
+        whatsappWebhookUrl: true,
+        customWebhookUrl: true,
       },
     });
 
@@ -29,11 +32,20 @@ router.get('/config', async (req: AuthenticatedRequest, res: Response) => {
     let discordMasked: string | null = null;
     if (user.discordWebhookUrl) {
       const raw = decryptSecret(user.discordWebhookUrl);
-      if (raw.length > 20) {
-        discordMasked = raw.substring(0, 32) + '...' + raw.slice(-6);
-      } else {
-        discordMasked = '***';
-      }
+      discordMasked = raw.length > 20 ? raw.substring(0, 32) + '...' + raw.slice(-6) : '***';
+    }
+
+    let slackMasked: string | null = null;
+    if (user.slackWebhookUrl) {
+      const raw = decryptSecret(user.slackWebhookUrl);
+      slackMasked = raw.length > 20 ? raw.substring(0, 32) + '...' + raw.slice(-6) : '***';
+    }
+
+    let customMasked: string | null = null;
+    const customRawEnc = user.whatsappWebhookUrl || user.customWebhookUrl;
+    if (customRawEnc) {
+      const raw = decryptSecret(customRawEnc);
+      customMasked = raw.length > 20 ? raw.substring(0, 32) + '...' + raw.slice(-6) : '***';
     }
 
     res.json({
@@ -43,6 +55,10 @@ router.get('/config', async (req: AuthenticatedRequest, res: Response) => {
       hasTelegramToken: Boolean(user.telegramBotToken),
       hasDiscordWebhook: Boolean(user.discordWebhookUrl),
       discordWebhookUrlMasked: discordMasked,
+      hasSlackWebhook: Boolean(user.slackWebhookUrl),
+      slackWebhookUrlMasked: slackMasked,
+      hasCustomWebhook: Boolean(customRawEnc),
+      customWebhookUrlMasked: customMasked,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Error fetching alert configuration';
@@ -59,6 +75,9 @@ router.post('/config', async (req: AuthenticatedRequest, res: Response) => {
       telegramBotToken,
       telegramChatId,
       discordWebhookUrl,
+      slackWebhookUrl,
+      whatsappWebhookUrl,
+      customWebhookUrl,
     } = req.body;
 
     const updateData: Record<string, any> = {};
@@ -91,6 +110,26 @@ router.post('/config', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    if (slackWebhookUrl !== undefined) {
+      if (slackWebhookUrl && slackWebhookUrl.trim().length > 0) {
+        updateData.slackWebhookUrl = encryptSecret(slackWebhookUrl.trim());
+      } else if (slackWebhookUrl === '') {
+        updateData.slackWebhookUrl = null;
+      }
+    }
+
+    const effectiveCustom = whatsappWebhookUrl !== undefined ? whatsappWebhookUrl : customWebhookUrl;
+    if (effectiveCustom !== undefined) {
+      if (effectiveCustom && effectiveCustom.trim().length > 0) {
+        const enc = encryptSecret(effectiveCustom.trim());
+        updateData.whatsappWebhookUrl = enc;
+        updateData.customWebhookUrl = enc;
+      } else if (effectiveCustom === '') {
+        updateData.whatsappWebhookUrl = null;
+        updateData.customWebhookUrl = null;
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id: req.user!.id },
       data: updateData,
@@ -100,6 +139,9 @@ router.post('/config', async (req: AuthenticatedRequest, res: Response) => {
         telegramBotToken: true,
         telegramChatId: true,
         discordWebhookUrl: true,
+        slackWebhookUrl: true,
+        whatsappWebhookUrl: true,
+        customWebhookUrl: true,
       },
     });
 
@@ -110,6 +152,8 @@ router.post('/config', async (req: AuthenticatedRequest, res: Response) => {
       alertThreshold: updated.alertThreshold,
       hasTelegramToken: Boolean(updated.telegramBotToken),
       hasDiscordWebhook: Boolean(updated.discordWebhookUrl),
+      hasSlackWebhook: Boolean(updated.slackWebhookUrl),
+      hasCustomWebhook: Boolean(updated.whatsappWebhookUrl || updated.customWebhookUrl),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Error updating alert configuration';
@@ -120,7 +164,7 @@ router.post('/config', async (req: AuthenticatedRequest, res: Response) => {
 // 3. Test alert endpoint
 router.post('/test', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { channel, telegramBotToken, telegramChatId, discordWebhookUrl } = req.body;
+    const { channel, telegramBotToken, telegramChatId, discordWebhookUrl, slackWebhookUrl, customWebhookUrl } = req.body;
 
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
@@ -128,6 +172,9 @@ router.post('/test', async (req: AuthenticatedRequest, res: Response) => {
         telegramBotToken: true,
         telegramChatId: true,
         discordWebhookUrl: true,
+        slackWebhookUrl: true,
+        whatsappWebhookUrl: true,
+        customWebhookUrl: true,
       },
     });
 
@@ -169,15 +216,75 @@ router.post('/test', async (req: AuthenticatedRequest, res: Response) => {
       const result = await AlertNotificationService.testDiscord(webhook);
       res.json(result);
       return;
+    } else if (channel === 'slack') {
+      const webhook = slackWebhookUrl
+        ? slackWebhookUrl.trim()
+        : user?.slackWebhookUrl
+        ? decryptSecret(user.slackWebhookUrl)
+        : null;
+
+      if (!webhook) {
+        res.status(400).json({
+          success: false,
+          message: 'Slack Webhook URL is required to send a test message.',
+        });
+        return;
+      }
+
+      const result = await AlertNotificationService.testSlack(webhook);
+      res.json(result);
+      return;
+    } else if (channel === 'custom' || channel === 'whatsapp') {
+      const webhook = customWebhookUrl
+        ? customWebhookUrl.trim()
+        : (user?.whatsappWebhookUrl || user?.customWebhookUrl)
+        ? decryptSecret(user.whatsappWebhookUrl || user.customWebhookUrl!)
+        : null;
+
+      if (!webhook) {
+        res.status(400).json({
+          success: false,
+          message: 'Webhook / WhatsApp URL is required to send a test message.',
+        });
+        return;
+      }
+
+      const result = await AlertNotificationService.testCustomWebhook(webhook);
+      res.json(result);
+      return;
     } else {
       res.status(400).json({
         success: false,
-        message: 'Invalid channel specified. Choose "telegram" or "discord".',
+        message: 'Invalid channel specified. Choose "telegram", "discord", "slack", or "custom".',
       });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Alert test error';
     res.status(500).json({ success: false, message: msg });
+  }
+});
+
+// 4. Direct Ping Endpoint
+router.post('/ping', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { title, message, priority, channel, deepLink } = req.body;
+    if (!title || !message) {
+      res.status(400).json({ error: 'Title and message are required.' });
+      return;
+    }
+
+    const result = await AlertNotificationService.sendDirectPing(req.user!.id, {
+      title,
+      message,
+      priority: priority || 'normal',
+      channel: channel || 'auto',
+      deepLink,
+    });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Ping error';
+    res.status(500).json({ error: msg });
   }
 });
 

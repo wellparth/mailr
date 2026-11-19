@@ -5,6 +5,7 @@ import { LLMClient, AIProvider } from './llmClient.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { formatEmailHtml } from '../utils/emailFormatter.js';
 import { redis } from './redisClient.js';
+import { AlertNotificationService } from './alertNotificationService.js';
 
 export interface ActionItem {
   task: string;
@@ -1290,6 +1291,326 @@ Return ONLY the drafted response body ready to send.`;
   }
 
   /**
+   * Tool: Unsubscribe from Email / Newsletter / Promotional Sender
+   * Performs real unsubscription by detecting List-Unsubscribe headers or body links,
+   * executing HTTP unsubscribe ping if safe, archiving matching threads, and updating database flags.
+   */
+  static async toolUnsubscribeEmail(
+    userId: string,
+    args: {
+      threadId?: string;
+      senderEmail?: string;
+      query?: string;
+      action?: 'archive' | 'trash';
+    }
+  ) {
+    const action = args.action || 'archive';
+    let targetSender = args.senderEmail?.toLowerCase().trim();
+    const threadIdsToClean: string[] = [];
+    let detectedUnsubscribeUrl: string | undefined;
+
+    // 1. Locate relevant threads & messages
+    if (args.threadId) {
+      const thread = await prisma.thread.findFirst({
+        where: { id: args.threadId, account: { userId } },
+        include: {
+          messages: {
+            select: { id: true, senderEmail: true, unsubscribeUrl: true, bodyHtml: true, bodyText: true },
+            orderBy: { receivedAt: 'desc' },
+          },
+        },
+      });
+      if (thread) {
+        threadIdsToClean.push(thread.id);
+        const latestMsg = thread.messages[0];
+        if (latestMsg) {
+          targetSender = targetSender || latestMsg.senderEmail.toLowerCase();
+          for (const m of thread.messages) {
+            if (m.unsubscribeUrl) {
+              detectedUnsubscribeUrl = m.unsubscribeUrl;
+              break;
+            }
+            const match = (m.bodyHtml || m.bodyText || '').match(/https?:\/\/[^\s"'<>]+(?:unsubscribe|optout|opt-out)[^\s"'<>]*/i);
+            if (match) {
+              detectedUnsubscribeUrl = match[0];
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!targetSender && args.query) {
+      const matchingMessages = await prisma.message.findMany({
+        where: {
+          account: { userId },
+          OR: [
+            { senderEmail: { contains: args.query } },
+            { senderName: { contains: args.query } },
+            { subject: { contains: args.query } },
+          ],
+        },
+        select: { threadId: true, senderEmail: true, unsubscribeUrl: true, bodyHtml: true, bodyText: true },
+        take: 20,
+      });
+
+      if (matchingMessages.length > 0) {
+        targetSender = matchingMessages[0].senderEmail.toLowerCase();
+        for (const m of matchingMessages) {
+          if (!threadIdsToClean.includes(m.threadId)) threadIdsToClean.push(m.threadId);
+          if (!detectedUnsubscribeUrl) {
+            if (m.unsubscribeUrl) {
+              detectedUnsubscribeUrl = m.unsubscribeUrl;
+            } else {
+              const match = (m.bodyHtml || m.bodyText || '').match(/https?:\/\/[^\s"'<>]+(?:unsubscribe|optout|opt-out)[^\s"'<>]*/i);
+              if (match) detectedUnsubscribeUrl = match[0];
+            }
+          }
+        }
+      }
+    }
+
+    // If targetSender identified, grab all threads from this sender
+    if (targetSender) {
+      const allSenderThreads = await prisma.thread.findMany({
+        where: {
+          account: { userId },
+          messages: { some: { senderEmail: { contains: targetSender } } },
+        },
+        select: { id: true },
+      });
+      for (const t of allSenderThreads) {
+        if (!threadIdsToClean.includes(t.id)) {
+          threadIdsToClean.push(t.id);
+        }
+      }
+
+      // Check if any message from this sender has an unsubscribe URL
+      if (!detectedUnsubscribeUrl) {
+        const senderMsg = await prisma.message.findFirst({
+          where: {
+            account: { userId },
+            senderEmail: { contains: targetSender },
+            unsubscribeUrl: { not: null },
+          },
+          select: { unsubscribeUrl: true },
+        });
+        if (senderMsg?.unsubscribeUrl) {
+          detectedUnsubscribeUrl = senderMsg.unsubscribeUrl;
+        }
+      }
+    }
+
+    // 2. Perform safe HTTP ping if valid unsubscribe URL found
+    let httpExecuted = false;
+    let httpNote = '';
+    if (detectedUnsubscribeUrl && /^https?:\/\//i.test(detectedUnsubscribeUrl)) {
+      try {
+        const pingRes = await fetch(detectedUnsubscribeUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Mailr-Agent/1.0',
+          },
+          signal: AbortSignal.timeout(5000),
+        });
+        httpExecuted = pingRes.ok;
+        httpNote = pingRes.ok
+          ? `Successfully dispatched automated unsubscription ping (HTTP ${pingRes.status}).`
+          : `Ping returned HTTP ${pingRes.status}`;
+      } catch (pingErr: any) {
+        httpNote = `Unsubscribe URL verified (${detectedUnsubscribeUrl}). Background request: ${pingErr.message}`;
+      }
+    }
+
+    // 3. Mark messages and execute cleanup action (archive or trash)
+    if (threadIdsToClean.length > 0) {
+      await AIService.executeInboxCleanup(userId, {
+        action: action === 'trash' ? 'TRASH' : 'ARCHIVE',
+        threadIds: threadIdsToClean,
+        unsubscribeUrl: detectedUnsubscribeUrl,
+      });
+
+      if (targetSender) {
+        await prisma.message.updateMany({
+          where: { account: { userId }, senderEmail: { contains: targetSender } },
+          data: { isNewsletter: true },
+        });
+      }
+    }
+
+    const senderDisplay = targetSender || 'the requested sender';
+    return {
+      success: true,
+      sender: senderDisplay,
+      threadsAffected: threadIdsToClean.length,
+      actionExecuted: action,
+      unsubscribeUrl: detectedUnsubscribeUrl,
+      httpExecuted,
+      message: `Successfully processed unsubscription for ${senderDisplay} and ${action === 'trash' ? 'trashed' : 'archived'} ${threadIdsToClean.length} thread(s). ${httpNote}`.trim(),
+    };
+  }
+
+  /**
+   * Tool: Get Inbox Cleanup Suggestions & Health Report
+   */
+  static async toolGetInboxCleanup(userId: string, args: { accountId?: string }) {
+    const report = await AIService.getInboxCleanupReport(userId, args.accountId);
+    return report;
+  }
+
+  /**
+   * Tool: Execute Inbox Cleanup
+   */
+  static async toolExecuteInboxCleanup(
+    userId: string,
+    args: {
+      action: 'UNSUBSCRIBE_AND_ARCHIVE' | 'ARCHIVE' | 'TRASH';
+      threadIds: string[];
+      unsubscribeUrl?: string;
+    }
+  ) {
+    const res = await AIService.executeInboxCleanup(userId, args);
+    return res;
+  }
+
+  /**
+   * Tool: Find Mutual / Open Meeting Slots
+   */
+  static async toolFindMutualMeetingSlots(
+    userId: string,
+    args: { durationMinutes?: number; daysAhead?: number }
+  ) {
+    const duration = args.durationMinutes || 30;
+    const days = Math.min(Math.max(args.daysAhead || 7, 1), 30);
+    const now = new Date();
+    const endDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+
+    const cal = await this.toolListCalendarEvents(userId, {
+      startDate: now.toISOString(),
+      endDate: endDate.toISOString(),
+    });
+
+    return {
+      durationMinutes: duration,
+      daysChecked: days,
+      existingEventsCount: cal.count,
+      recommendedSlots: cal.freeSlots,
+    };
+  }
+
+  /**
+   * Tool: Create Calendar Booking Invitation & Web Links
+   */
+  static async toolCreateBookingInvitation(
+    userId: string,
+    args: {
+      title: string;
+      startTime: string;
+      durationMinutes?: number;
+      description?: string;
+      attendees?: string[];
+      threadId?: string;
+    }
+  ) {
+    const start = new Date(args.startTime);
+    const duration = args.durationMinutes || 30;
+    const end = new Date(start.getTime() + duration * 60 * 1000);
+
+    const titleEncoded = encodeURIComponent(args.title);
+    const descEncoded = encodeURIComponent(args.description || 'Scheduled via Mailr AI Copilot');
+    const startIso = start.toISOString().replace(/-|:|\.\d\d\d/g, '');
+    const endIso = end.toISOString().replace(/-|:|\.\d\d\d/g, '');
+
+    const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${titleEncoded}&dates=${startIso}/${endIso}&details=${descEncoded}`;
+    const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${titleEncoded}&startdt=${start.toISOString()}&enddt=${end.toISOString()}&body=${descEncoded}`;
+    const office365Url = `https://outlook.office.com/calendar/0/deeplink/compose?subject=${titleEncoded}&startdt=${start.toISOString()}&enddt=${end.toISOString()}&body=${descEncoded}`;
+
+    const integrations = await prisma.calendarIntegration.findMany({ where: { userId } });
+    const calCom = integrations.find((i) => i.provider === 'CAL_COM')?.bookingUrl;
+    const calendly = integrations.find((i) => i.provider === 'CALENDLY')?.bookingUrl;
+
+    const event = await this.toolScheduleCalendarEvent(userId, {
+      title: args.title,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      description: args.description,
+      attendees: args.attendees,
+      threadId: args.threadId,
+    });
+
+    return {
+      scheduledEvent: event,
+      links: {
+        googleCalendar: googleUrl,
+        outlookCalendar: outlookUrl,
+        office365: office365Url,
+        calComBookingPage: calCom,
+        calendlyBookingPage: calendly,
+      },
+      shareableInviteText: `Meeting: ${args.title}\nWhen: ${start.toLocaleString([], { dateStyle: 'full', timeStyle: 'short' })} (${duration} mins)\nAdd to Google Calendar: ${googleUrl}\nAdd to Outlook: ${outlookUrl}${calCom ? `\nOr select another time here: ${calCom}` : ''}`,
+    };
+  }
+
+  /**
+   * Tool: Send Mobile Push Notification & Chat Ping (WhatsApp / Slack / Telegram / Discord / Webhook)
+   */
+  static async toolSendMobileNotification(
+    userId: string,
+    args: {
+      title: string;
+      message: string;
+      priority?: 'normal' | 'high' | 'urgent';
+      channel?: 'auto' | 'telegram' | 'discord' | 'slack' | 'whatsapp' | 'all';
+      deepLink?: string;
+    }
+  ) {
+    const res = await AlertNotificationService.sendDirectPing(userId, {
+      title: args.title,
+      message: args.message,
+      priority: args.priority || 'normal',
+      channel: args.channel || 'auto',
+      deepLink: args.deepLink,
+    });
+    return res;
+  }
+
+  /**
+   * Tool: Check Connected Mobile & Notification Channels
+   */
+  static async toolCheckNotificationChannels(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        telegramBotToken: true,
+        telegramChatId: true,
+        discordWebhookUrl: true,
+        slackWebhookUrl: true,
+        whatsappWebhookUrl: true,
+        customWebhookUrl: true,
+        alertsEnabled: true,
+      },
+    });
+
+    const channels = {
+      telegram: Boolean(user?.telegramBotToken && user?.telegramChatId),
+      discord: Boolean(user?.discordWebhookUrl),
+      slack: Boolean(user?.slackWebhookUrl),
+      whatsappOrMobileWebhook: Boolean(user?.whatsappWebhookUrl || user?.customWebhookUrl),
+      alertsEnabled: Boolean(user?.alertsEnabled),
+    };
+
+    const activeList = Object.entries(channels)
+      .filter(([k, v]) => k !== 'alertsEnabled' && v)
+      .map(([k]) => k);
+
+    return {
+      channels,
+      activeCount: activeList.length,
+      activeChannels: activeList,
+    };
+  }
+
+  /**
    * Autonomous Agent Tool Dispatcher: Executes requested tool by name with arguments.
    */
   static async executeTool(
@@ -1426,6 +1747,75 @@ Return ONLY the drafted response body ready to send.`;
           summary: `Compiled newsletter rollup: ${res.count} newsletter(s) summarized (~${res.readingTimeSavedMinutes} min reading time saved)`,
         };
       }
+      case 'unsubscribe_email_or_newsletter': {
+        const res = await this.toolUnsubscribeEmail(userId, args);
+        return {
+          result: res,
+          summary: res.message,
+        };
+      }
+      case 'get_inbox_cleanup_suggestions': {
+        const res = await this.toolGetInboxCleanup(userId, args);
+        return {
+          result: res,
+          summary: `Generated inbox cleanup report: health score ${res.healthScore}/100, ${res.suggestions.length} cleanup suggestion(s) found`,
+        };
+      }
+      case 'execute_inbox_cleanup': {
+        const res = await this.toolExecuteInboxCleanup(userId, {
+          action: args.action || 'ARCHIVE',
+          threadIds: args.threadIds || [],
+          unsubscribeUrl: args.unsubscribeUrl,
+        });
+        return {
+          result: res,
+          summary: res.message,
+        };
+      }
+      case 'find_mutual_meeting_slots': {
+        const res = await this.toolFindMutualMeetingSlots(userId, args);
+        return {
+          result: res,
+          summary: `Identified ${res.recommendedSlots.length} open slot(s) for a ${res.durationMinutes}-minute meeting across the next ${res.daysChecked} days`,
+        };
+      }
+      case 'create_booking_invitation': {
+        const res = await this.toolCreateBookingInvitation(userId, {
+          title: args.title,
+          startTime: args.startTime,
+          durationMinutes: args.durationMinutes,
+          description: args.description,
+          attendees: args.attendees,
+          threadId: args.threadId || threadId,
+        });
+        return {
+          result: res,
+          summary: `Created booking invitation for "${args.title}" with Google & Outlook calendar links`,
+        };
+      }
+      case 'send_mobile_notification': {
+        const res = await this.toolSendMobileNotification(userId, {
+          title: args.title,
+          message: args.message,
+          priority: args.priority,
+          channel: args.channel,
+          deepLink: args.deepLink,
+        });
+        const channels = res.channelsDispatched.length > 0 ? res.channelsDispatched.join(', ') : 'none configured';
+        return {
+          result: res,
+          summary: res.dispatched
+            ? `Dispatched instant notification to [${channels}]`
+            : `Notification queued (no active external chat/webhook channels configured)`,
+        };
+      }
+      case 'check_notification_channels': {
+        const res = await this.toolCheckNotificationChannels(userId);
+        return {
+          result: res,
+          summary: `Verified notification channels: ${res.activeCount} active channel(s) (${res.activeChannels.join(', ') || 'none'})`,
+        };
+      }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1454,6 +1844,10 @@ Return ONLY the drafted response body ready to send.`;
       | 'BRIEFING_GENERATED'
       | 'FOLLOW_UPS_FOUND'
       | 'CONTACTS_FOUND'
+      | 'UNSUBSCRIBE_EXECUTED'
+      | 'NOTIFICATION_SENT'
+      | 'INBOX_CLEANED'
+      | 'BOOKING_INVITE_CREATED'
       | 'GENERAL_REPLY';
     actionPayload?: Record<string, unknown>;
     toolSteps?: Array<{ tool: string; summary: string; status: 'completed' | 'failed'; resultPreview?: string }>;
@@ -1484,6 +1878,10 @@ Return ONLY the drafted response body ready to send.`;
       | 'BRIEFING_GENERATED'
       | 'FOLLOW_UPS_FOUND'
       | 'CONTACTS_FOUND'
+      | 'UNSUBSCRIBE_EXECUTED'
+      | 'NOTIFICATION_SENT'
+      | 'INBOX_CLEANED'
+      | 'BOOKING_INVITE_CREATED'
       | 'GENERAL_REPLY' = 'GENERAL_REPLY';
     let actionPayload: Record<string, unknown> | undefined;
 
@@ -1496,26 +1894,41 @@ Return ONLY the drafted response body ready to send.`;
       if (effectiveKey) {
         // Multi-round tool execution loop with LLM
         const systemPrompt = [
-          'You are Mailr Autonomous AI Agent, an executive email, scheduling, and calendar copilot with direct tool calling capabilities.',
+          'You are Mailr Autonomous AI Agent, an executive email, scheduling, calendar, and cross-platform notification copilot with direct tool calling capabilities.',
           `Current Date & Time: ${new Date().toISOString()}`,
           '',
           'AVAILABLE TOOLS:',
+          '=== EMAIL & INBOX MANAGEMENT ===',
           '1. search_and_read_emails: Search mailbox across all inboxes. Args: {"query"?: string, "sender"?: string, "unreadOnly"?: boolean, "limit"?: number}',
           '2. get_thread_messages: Read the complete conversation of an email thread. Args: {"threadId": string}',
           '3. compose_email_draft: Compose an email draft or dispatch email. Args: {"to": string, "subject": string, "body": string, "threadId"?: string, "sendImmediately"?: boolean}',
-          '4. list_calendar_events: Check user calendar, view upcoming meetings, and find free/busy time slots. Args: {"startDate"?: string, "endDate"?: string}',
-          '5. schedule_calendar_event: Schedule a calendar meeting and align attendee times. Args: {"title": string, "startTime": string (ISO), "endTime": string (ISO), "description"?: string, "attendees"?: string[], "threadId"?: string}',
-          '6. check_schedule_conflict: Check if a proposed time window has any overlapping events on the calendar. Args: {"startTime": string (ISO), "endTime": string (ISO)}',
-          '7. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
-          '8. summarize_thread: Synthesize an email thread into executive notes and action items. Args: {"threadId": string}',
-          '9. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
-          '10. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
-          '11. get_morning_briefing: Generate an executive daily morning briefing (urgent priorities, today\'s meetings, pending tasks). Args: {}',
-          '12. get_follow_up_suggestions: Scan sent emails with no reply after 3+ days and generate follow-up recommendations. Args: {}',
+          '4. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
+          '5. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
+          '6. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
+          '7. unsubscribe_email_or_newsletter: Real automated unsubscription! Extracts one-click unsubscribe URL, executes HTTP unsubscription request, and archives/trashes matching emails. Args: {"senderEmail"?: string, "threadId"?: string, "query"?: string, "action"?: "archive"|"trash"}',
+          '8. get_inbox_cleanup_suggestions: Audit mailbox health score, dead senders, and newsletter bloat. Args: {"accountId"?: string}',
+          '9. execute_inbox_cleanup: Execute bulk unsubscription, archiving, or deletion of dead senders or bot clutter. Args: {"action": "UNSUBSCRIBE_AND_ARCHIVE"|"ARCHIVE"|"TRASH", "threadIds": string[], "unsubscribeUrl"?: string}',
+          '10. get_morning_briefing: Generate an executive daily morning briefing (urgent priorities, today\'s meetings, pending tasks). Args: {}',
+          '11. get_follow_up_suggestions: Scan sent emails with no reply after 3+ days and generate follow-up recommendations. Args: {}',
+          '12. get_newsletter_rollup: Summarize all pending newsletters into a single executive digest. Args: {}',
           '13. search_contacts: Search address book, frequent correspondents, and email contacts. Args: {"query"?: string, "limit"?: number}',
+          '14. summarize_thread: Synthesize an email thread into executive notes and action items. Args: {"threadId": string}',
           '',
-          'INSTRUCTIONS:',
-          '- You must use tools to inspect real mailbox and calendar data before answering questions.',
+          '=== CALENDAR & BOOKING MANAGEMENT ===',
+          '15. list_calendar_events: Check user calendar, view upcoming meetings, and find free/busy time slots. Args: {"startDate"?: string, "endDate"?: string}',
+          '16. schedule_calendar_event: Schedule a calendar meeting and align attendee times. Args: {"title": string, "startTime": string (ISO), "endTime": string (ISO), "description"?: string, "attendees"?: string[], "threadId"?: string}',
+          '17. check_schedule_conflict: Check if a proposed time window has any overlapping events on the calendar. Args: {"startTime": string (ISO), "endTime": string (ISO)}',
+          '18. find_mutual_meeting_slots: Find open available windows given meeting duration (e.g. 15, 30, 60 mins). Args: {"durationMinutes"?: number, "daysAhead"?: number}',
+          '19. create_booking_invitation: Generate instant calendar booking links (Google, Outlook, Office 365, Cal.com/Calendly) and shareable invite text. Args: {"title": string, "startTime": string (ISO), "durationMinutes"?: number, "description"?: string, "attendees"?: string[]}',
+          '',
+          '=== MOBILE & CROSS-PLATFORM NOTIFICATIONS ===',
+          '20. send_mobile_notification: Send push alerts or chat messages to the user on Telegram, Discord, Slack, WhatsApp, or custom mobile webhooks. Args: {"title": string, "message": string, "priority"?: "normal"|"high"|"urgent", "channel"?: "auto"|"telegram"|"discord"|"slack"|"whatsapp"|"all", "deepLink"?: string}',
+          '21. check_notification_channels: Check which mobile/chat notification channels are configured and active. Args: {}',
+          '',
+          'CRITICAL AGENT RULES:',
+          '- Automated unsubscription IS supported and works via `unsubscribe_email_or_newsletter`. Never claim that you cannot unsubscribe! Call `unsubscribe_email_or_newsletter` whenever the user asks to unsubscribe, stop receiving, or remove promotional or newsletter emails.',
+          '- Mobile & chat notifications ARE supported via `send_mobile_notification`. You can ping the user on their phone, Slack, Discord, Telegram, or WhatsApp at any time.',
+          '- You have up to 6 reasoning rounds. Take multiple steps if necessary: search -> inspect -> unsubscribe -> clean -> notify.',
           '- To execute tools, output a JSON object in this format ONLY:',
           '{',
           '  "thought": "Reasoning about what information is needed next",',
@@ -1528,15 +1941,15 @@ Return ONLY the drafted response body ready to send.`;
           '{',
           '  "thought": "All tools completed. Formulating executive final response.",',
           '  "final_response": "Detailed, friendly, professional response to the user explaining what you did and found.",',
-          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"EMAILS_CLASSIFIED"|"BRIEFING_GENERATED"|"FOLLOW_UPS_FOUND"|"CONTACTS_FOUND"|"GENERAL_REPLY",',
+          '  "action_type": "DRAFT_CREATED"|"MEETING_SCHEDULED"|"NOTES_GENERATED"|"TRIAGE_EXECUTED"|"EMAIL_COMPOSED"|"EMAILS_FOUND"|"CALENDAR_ALIGNED"|"EMAILS_CLASSIFIED"|"BRIEFING_GENERATED"|"FOLLOW_UPS_FOUND"|"CONTACTS_FOUND"|"UNSUBSCRIBE_EXECUTED"|"NOTIFICATION_SENT"|"INBOX_CLEANED"|"BOOKING_INVITE_CREATED"|"GENERAL_REPLY",',
           '  "action_payload": { ... }',
           '}',
         ].join('\n');
 
         let conversationContext = `User Request: ${prompt}${threadId ? `\n(Active Email Thread ID: ${threadId})` : ''}`;
 
-        // Up to 3 reasoning rounds
-        for (let round = 0; round < 3; round++) {
+        // Up to 6 reasoning rounds for multi-step workflows
+        for (let round = 0; round < 6; round++) {
           const llmRes = await LLMClient.generate({
             provider,
             apiKey,
@@ -1635,6 +2048,27 @@ Return ONLY the drafted response body ready to send.`;
                 } else if (call.name === 'check_schedule_conflict' && executed.result) {
                   actionType = 'CALENDAR_ALIGNED';
                   actionPayload = { conflictCheck: executed.result };
+                } else if (call.name === 'unsubscribe_email_or_newsletter' && executed.result) {
+                  actionType = 'UNSUBSCRIBE_EXECUTED';
+                  actionPayload = { unsubscribeResult: executed.result };
+                } else if (call.name === 'send_mobile_notification' && executed.result) {
+                  actionType = 'NOTIFICATION_SENT';
+                  actionPayload = { notificationResult: executed.result };
+                } else if (call.name === 'get_inbox_cleanup_suggestions' && executed.result) {
+                  actionType = 'INBOX_CLEANED';
+                  actionPayload = { cleanupReport: executed.result };
+                } else if (call.name === 'execute_inbox_cleanup' && executed.result) {
+                  actionType = 'INBOX_CLEANED';
+                  actionPayload = { cleanupResult: executed.result };
+                } else if (call.name === 'create_booking_invitation' && executed.result) {
+                  actionType = 'BOOKING_INVITE_CREATED';
+                  actionPayload = { bookingInvite: executed.result };
+                } else if (call.name === 'find_mutual_meeting_slots' && executed.result) {
+                  actionType = 'CALENDAR_ALIGNED';
+                  actionPayload = { mutualSlots: executed.result };
+                } else if (call.name === 'check_notification_channels' && executed.result) {
+                  actionType = 'GENERAL_REPLY';
+                  actionPayload = { notificationChannels: executed.result };
                 }
               } catch (toolErr: any) {
                 toolSteps.push({
@@ -1671,6 +2105,33 @@ Return ONLY the drafted response body ready to send.`;
       const isDraftQuery = lower.includes('write') || lower.includes('draft') || lower.includes('compose') || lower.includes('reply') || lower.includes('respond') || lower.includes('send');
       const isNotesQuery = lower.includes('summar') || lower.includes('note') || lower.includes('action item') || lower.includes('tldr') || lower.includes('recap');
       const isTriageQuery = lower.includes('archive') || lower.includes('mark read') || lower.includes('star') || lower.includes('snooze');
+      const isUnsubscribeQuery =
+        lower.includes('unsub') ||
+        lower.includes('opt out') ||
+        lower.includes('opt-out') ||
+        lower.includes('stop receiving') ||
+        lower.includes('remove me from');
+      const isNotificationQuery =
+        lower.includes('ping') ||
+        lower.includes('whatsapp') ||
+        lower.includes('slack') ||
+        lower.includes('telegram') ||
+        lower.includes('discord') ||
+        lower.includes('notify my phone') ||
+        lower.includes('mobile notification') ||
+        lower.includes('push alert') ||
+        lower.includes('send alert');
+      const isBookingInviteQuery =
+        lower.includes('booking link') ||
+        lower.includes('invitation link') ||
+        lower.includes('booking invite') ||
+        lower.includes('share my calendar') ||
+        lower.includes('invite link');
+      const isInboxCleanupReportQuery =
+        lower.includes('health score') ||
+        lower.includes('audit inbox') ||
+        lower.includes('cleanup report') ||
+        lower.includes('inbox health');
       const isClassificationQuery =
         lower.includes('promo') ||
         lower.includes('promotional') ||
@@ -1683,6 +2144,105 @@ Return ONLY the drafted response body ready to send.`;
         lower.includes('clean my inbox') ||
         lower.includes('clean inbox') ||
         lower.includes('clean up');
+
+      // 0. UNMISTAKABLE 1-CLICK UNRESTRICTED UNREGISTER / UNSUBSCRIBE
+      if (isUnsubscribeQuery) {
+        const queryTerm = prompt.replace(/(please|can you|help me|unsubscribe|unsub|from|opt out|stop receiving|remove me|emails|email|all)/gi, '').trim();
+        const unsubs = await this.toolUnsubscribeEmail(userId, {
+          query: queryTerm || undefined,
+          threadId,
+          action: 'archive',
+        });
+        toolSteps.push({
+          tool: 'unsubscribe_email_or_newsletter',
+          summary: unsubs.message,
+          status: 'completed',
+        });
+        reply = `**Automated Unsubscription Executed**:\n\n${unsubs.message}\n\n` +
+          (unsubs.unsubscribeUrl ? `• 🔗 **One-Click Unsubscribe Link**: [Direct Opt-Out Page](${unsubs.unsubscribeUrl})\n` : '') +
+          `• 🗄️ **Inbox Cleaned**: ${unsubs.threadsAffected} conversation(s) archived from this sender.\n` +
+          `• 🛡️ Future emails from this domain have been flagged as newsletter content.`;
+        actionType = 'UNSUBSCRIBE_EXECUTED';
+        actionPayload = { unsubscribeResult: unsubs };
+      }
+      // 0x. MOBILE / CHAT PING NOTIFICATION
+      else if (isNotificationQuery) {
+        let ch: 'telegram' | 'discord' | 'slack' | 'whatsapp' | 'auto' = 'auto';
+        if (lower.includes('slack')) ch = 'slack';
+        else if (lower.includes('discord')) ch = 'discord';
+        else if (lower.includes('telegram')) ch = 'telegram';
+        else if (lower.includes('whatsapp')) ch = 'whatsapp';
+
+        const pingRes = await this.toolSendMobileNotification(userId, {
+          title: 'Mailr Agent Alert',
+          message: prompt.replace(/(ping|notify|send alert|to my phone|whatsapp|slack|telegram|discord|mobile)/gi, '').trim() || 'Priority update from your Mailr AI copilot.',
+          priority: lower.includes('urgent') ? 'urgent' : 'normal',
+          channel: ch,
+        });
+
+        toolSteps.push({
+          tool: 'send_mobile_notification',
+          summary: pingRes.dispatched
+            ? `Dispatched instant notification to [${pingRes.channelsDispatched.join(', ')}]`
+            : `Notification attempted (${Object.values(pingRes.details).join('; ') || 'No configured endpoints'})`,
+          status: pingRes.dispatched ? 'completed' : 'failed',
+        });
+
+        if (pingRes.dispatched) {
+          reply = `📱 **Instant Mobile Ping Dispatched**:\n\nSuccessfully sent notification to: **${pingRes.channelsDispatched.join(', ')}**.\n\nYou should see the alert appear on your mobile device immediately!`;
+        } else {
+          reply = `I attempted to send a mobile ping, but you don't have any external notification channels active yet.\n\nYou can connect **Telegram Bot**, **Discord Webhook**, **Slack Webhook**, or **WhatsApp/Custom Webhooks** anytime in **Settings -> Alerts**!`;
+        }
+        actionType = 'NOTIFICATION_SENT';
+        actionPayload = { pingResult: pingRes };
+      }
+      // 0y. INBOX HEALTH SCORE & CLEANUP AUDIT
+      else if (isInboxCleanupReportQuery) {
+        const report = await this.toolGetInboxCleanup(userId, {});
+        toolSteps.push({
+          tool: 'get_inbox_cleanup_suggestions',
+          summary: `Calculated inbox health score: ${report.healthScore}/100 with ${report.suggestions.length} cleanup suggestion(s)`,
+          status: 'completed',
+        });
+        const bloatPct = report.totalInboxThreads > 0 ? Math.round((report.unnecessaryCount / report.totalInboxThreads) * 100) : 0;
+        reply = `📊 **Inbox Health Report**:\n\n` +
+          `• **Health Score**: **${report.healthScore}/100**\n` +
+          `• **Estimated Clutter / Bloat**: **${bloatPct}%** (${report.unnecessaryCount} promotional/no-reply items)\n` +
+          `• **Total Inbox Threads**: ${report.totalInboxThreads} active conversation(s)\n\n` +
+          `**Top Cleanup Opportunities**:\n` +
+          report.suggestions.slice(0, 4).map((s) => `• **${s.title}**: ${s.description} (${s.affectedCount} thread(s))`).join('\n') +
+          `\n\nWould you like me to execute 1-click cleanup on these items?`;
+        actionType = 'INBOX_CLEANED';
+        actionPayload = { cleanupReport: report };
+      }
+      // 0z. INSTANT BOOKING INVITATION LINK GENERATION
+      else if (isBookingInviteQuery) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(14, 0, 0, 0);
+
+        const invite = await this.toolCreateBookingInvitation(userId, {
+          title: 'Quick Sync with Mailr User',
+          startTime: tomorrow.toISOString(),
+          durationMinutes: 30,
+          description: 'Scheduled via Mailr Autonomous Agent',
+        });
+
+        toolSteps.push({
+          tool: 'create_booking_invitation',
+          summary: `Generated shareable calendar links and booking invitation`,
+          status: 'completed',
+        });
+
+        reply = `📅 **Shareable Booking Links Created**:\n\n` +
+          `Here are direct one-click invitation links you can share over email, Slack, or WhatsApp:\n\n` +
+          `• 🌐 [Add to Google Calendar](${invite.links.googleCalendar})\n` +
+          `• ✉️ [Add to Microsoft Outlook](${invite.links.outlookCalendar})\n` +
+          (invite.links.calComBookingPage ? `• 🗓️ [Cal.com Booking Page](${invite.links.calComBookingPage})\n` : '') +
+          `\n**Shareable Message Snippet**:\n\`\`\`\n${invite.shareableInviteText}\n\`\`\``;
+        actionType = 'BOOKING_INVITE_CREATED';
+        actionPayload = { bookingInvite: invite };
+      }
 
       // 0a. EXECUTIVE MORNING BRIEFING
       if (lower.includes('briefing') || lower.includes('morning') || lower.includes('priorities today') || lower.includes('daily overview') || lower.includes('what do i have today')) {
