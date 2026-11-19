@@ -89,7 +89,87 @@ export class AgentService {
   }
 
   /**
-   * Synthesize a long email conversation into executive notes, action items, and key decisions.
+   * Sliding-Window Context Compression:
+   * Retains full text bodies for the latest N messages (default 4).
+   * Compresses older conversational history into compact chronological summaries.
+   * Enforces a strict token ceiling (~4,000 tokens / 16,000 chars) to prevent LLM context overflow.
+   */
+  static compressThreadContext(
+    messages: Array<{
+      id?: string;
+      senderName?: string | null;
+      senderEmail: string;
+      subject: string;
+      bodyText?: string | null;
+      snippet?: string | null;
+      receivedAt: Date | string;
+    }>,
+    options?: {
+      maxRecentFullMessages?: number;
+      maxContextTokens?: number;
+    }
+  ): {
+    fullText: string;
+    totalTokensEstimated: number;
+    compressedHistoryCount: number;
+    recentMessagesCount: number;
+  } {
+    const maxRecent = options?.maxRecentFullMessages || 4;
+    const maxChars = (options?.maxContextTokens || 4000) * 4;
+
+    if (messages.length === 0) {
+      return { fullText: '', totalTokensEstimated: 0, compressedHistoryCount: 0, recentMessagesCount: 0 };
+    }
+
+    const cutoffIndex = Math.max(0, messages.length - maxRecent);
+    const earlierMessages = messages.slice(0, cutoffIndex);
+    const recentMessages = messages.slice(cutoffIndex);
+
+    const contextParts: string[] = [];
+
+    if (earlierMessages.length > 0) {
+      contextParts.push(`--- Chronological Thread History (${earlierMessages.length} earlier message(s) compressed) ---`);
+      for (const msg of earlierMessages) {
+        const dateStr = new Date(msg.receivedAt).toLocaleDateString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const sender = msg.senderName || msg.senderEmail;
+        const cleanSnippet = (msg.snippet || msg.bodyText || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, 150);
+        contextParts.push(`• [${dateStr}] ${sender}: "${cleanSnippet}"`);
+      }
+      contextParts.push('---------------------------------------------------\n');
+    }
+
+    contextParts.push(`--- Latest ${recentMessages.length} Message(s) in Conversation (Full Text) ---`);
+    for (const msg of recentMessages) {
+      const dateStr = new Date(msg.receivedAt).toLocaleString();
+      const sender = msg.senderName ? `${msg.senderName} <${msg.senderEmail}>` : msg.senderEmail;
+      const body = (msg.bodyText || msg.snippet || '').trim().substring(0, 2500);
+      contextParts.push(`[${dateStr}] From: ${sender}\nSubject: ${msg.subject}\n\n${body}\n`);
+    }
+
+    let combined = contextParts.join('\n');
+    if (combined.length > maxChars) {
+      combined = combined.substring(0, maxChars) + '\n\n[... Remaining historical context truncated to fit LLM token budget ...]';
+    }
+
+    return {
+      fullText: combined,
+      totalTokensEstimated: Math.ceil(combined.length / 4),
+      compressedHistoryCount: earlierMessages.length,
+      recentMessagesCount: recentMessages.length,
+    };
+  }
+
+  /**
+   * Synthesize an email conversation into executive notes, action items, and key decisions.
+   * Utilizes sliding-window context compression to support long email threads without token overflow.
    */
   static async generateThreadNotes(userId: string, threadId: string): Promise<ThreadNotesResult> {
     const thread = await prisma.thread.findFirst({
@@ -128,10 +208,11 @@ export class AgentService {
     const messages = thread.messages;
     const cleanSubject = thread.subject.replace(/^(re:\s*|fwd:\s*)/i, '').trim();
 
-    // Aggregate text
-    const fullText = messages
-      .map((m) => `[${m.senderName || m.senderEmail} at ${new Date(m.receivedAt).toLocaleString()}]: ${m.bodyText || m.snippet || ''}`)
-      .join('\n\n');
+    // 1. Sliding-Window Context Compression: Bounded to max 4,000 tokens
+    const { fullText } = AgentService.compressThreadContext(messages, {
+      maxRecentFullMessages: 4,
+      maxContextTokens: 4000,
+    });
 
     // Extract participants
     const participants = Array.from(new Set(messages.map((m) => m.senderName || m.senderEmail)));
@@ -198,9 +279,53 @@ export class AgentService {
       keyDecisions.push('Initial correspondence established.');
     }
 
-    // Executive summary
+    // Executive summary (default heuristic)
     const latestSnippet = messages[messages.length - 1]?.snippet || messages[messages.length - 1]?.bodyText?.substring(0, 200) || '';
-    const summary = `Thread between ${participants.slice(0, 3).join(', ')} regarding "${cleanSubject}". Conversation consists of ${messages.length} message(s). Most recent status: "${latestSnippet.substring(0, 180)}..."`;
+    let summary = `Thread between ${participants.slice(0, 3).join(', ')} regarding "${cleanSubject}". Conversation consists of ${messages.length} message(s). Most recent status: "${latestSnippet.substring(0, 180)}..."`;
+
+    // 2. Optional LLM Synthesis enhancement if user has BYOK credentials
+    try {
+      const { provider, apiKey, model } = await this.getUserAIConfig(userId);
+      const effectiveKey = LLMClient.resolveApiKey(provider, apiKey);
+      if (effectiveKey) {
+        const llmRes = await LLMClient.generate({
+          provider,
+          apiKey,
+          model,
+          systemPrompt: 'You are an executive assistant. Synthesize the email thread into a concise 2-sentence executive summary, key decisions, and action items. Return JSON ONLY with format: { "summary": string, "keyDecisions": string[], "actionItems": [{ "task": string, "assignee"?: string, "deadline"?: string }] }',
+          userPrompt: `Subject: ${cleanSubject}\n\n${fullText}`,
+          temperature: 0.1,
+          maxTokens: 500,
+        });
+
+        const rawText = llmRes.text.trim();
+        const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, rawText];
+        const parsed = JSON.parse(jsonMatch[1] || rawText);
+
+        if (parsed.summary && typeof parsed.summary === 'string') {
+          summary = parsed.summary;
+        }
+        if (Array.isArray(parsed.keyDecisions) && parsed.keyDecisions.length > 0) {
+          keyDecisions.length = 0;
+          keyDecisions.push(...parsed.keyDecisions.map(String));
+        }
+        if (Array.isArray(parsed.actionItems) && parsed.actionItems.length > 0) {
+          actionItems.length = 0;
+          parsed.actionItems.forEach((item: any) => {
+            if (item && item.task) {
+              actionItems.push({
+                task: String(item.task),
+                assignee: item.assignee || 'Unassigned',
+                deadline: item.deadline,
+                completed: false,
+              });
+            }
+          });
+        }
+      }
+    } catch (llmErr) {
+      console.warn('[AgentService] LLM synthesis skipped, continuing with sliding-window heuristic summary:', llmErr);
+    }
 
     // Markdown document
     const rawMarkdown = [
@@ -598,19 +723,33 @@ Return ONLY the drafted response body ready to send.`;
       throw new Error(`Thread not found with ID: ${args.threadId}`);
     }
 
-    return {
-      threadId: thread.id,
-      subject: thread.subject,
-      account: thread.account.emailAddress,
-      messagesCount: thread.messages.length,
-      messages: thread.messages.map((m) => ({
+    const totalMsgs = thread.messages.length;
+    const maxRecent = 4;
+    const cutoffIndex = Math.max(0, totalMsgs - maxRecent);
+
+    const formattedMessages = thread.messages.map((m, idx) => {
+      const isHistorical = idx < cutoffIndex;
+      return {
         id: m.id,
         from: `${m.senderName ? `${m.senderName} ` : ''}<${m.senderEmail}>`,
         senderEmail: m.senderEmail,
         subject: m.subject,
         receivedAt: m.receivedAt.toISOString(),
-        body: (m.bodyText || m.snippet || '').substring(0, 1500),
-      })),
+        isCompressedSummary: isHistorical,
+        body: isHistorical
+          ? `[Historical summary: ${(m.snippet || m.bodyText || '').replace(/\s+/g, ' ').trim().substring(0, 160)}]`
+          : (m.bodyText || m.snippet || '').trim().substring(0, 2000),
+      };
+    });
+
+    return {
+      threadId: thread.id,
+      subject: thread.subject,
+      account: thread.account.emailAddress,
+      messagesCount: totalMsgs,
+      recentMessagesCount: Math.min(totalMsgs, maxRecent),
+      compressedHistoryCount: cutoffIndex,
+      messages: formattedMessages,
     };
   }
 
