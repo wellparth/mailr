@@ -170,6 +170,36 @@ export function AICopilotDrawer({
     }
   };
 
+  const handleDismissFollowUp = async (threadId: string, msgId: string) => {
+    try {
+      await apiFetch("/api/agent/follow-ups/dismiss", {
+        method: "POST",
+        body: JSON.stringify({ threadId, snoozeDays: 7 }),
+      });
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId && m.actionPayload?.followUps?.suggestions
+            ? {
+                ...m,
+                actionPayload: {
+                  ...m.actionPayload,
+                  followUps: {
+                    ...m.actionPayload.followUps,
+                    count: Math.max(0, m.actionPayload.followUps.count - 1),
+                    suggestions: m.actionPayload.followUps.suggestions.filter(
+                      (s: any) => s.threadId !== threadId
+                    ),
+                  },
+                },
+              }
+            : m
+        )
+      );
+    } catch (err: any) {
+      alert("Failed to dismiss reminder: " + (err.message || "Unknown error"));
+    }
+  };
+
   // Resizable width state (persisted in localStorage)
   const [copilotWidth, setCopilotWidth] = React.useState<number>(380);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -1545,48 +1575,73 @@ export function AICopilotDrawer({
                   </div>
                 )}
 
-                {/* 8. Interactive Card: Follow-Up Suggestions */}
+                {/* 8. Interactive Card: Smart Follow-Up Tracker (Ghosting Radar) */}
                 {msg.actionType === "FOLLOW_UPS_FOUND" && msg.actionPayload?.followUps && (
                   <div className="p-3 bg-secondary/40 border border-sky-500/30 rounded-xl space-y-2.5 text-xs text-foreground animate-in fade-in">
                     <div className="flex items-center justify-between font-semibold text-sky-400">
                       <span className="flex items-center gap-1.5">
                         <History className="h-3.5 w-3.5" />
-                        Follow-up Recommendations
+                        Ghosting Radar • Follow-ups
                       </span>
                       <Badge variant="outline" className="text-[10px] text-sky-400 border-sky-500/30">
-                        {msg.actionPayload.followUps.count} Awaiting Response
+                        {msg.actionPayload.followUps.count} Awaiting Reply
                       </Badge>
                     </div>
 
-                    <div className="divide-y divide-border/30 max-h-48 overflow-y-auto space-y-1.5 pr-0.5">
-                      {msg.actionPayload.followUps.suggestions?.map((sug: any, i: number) => (
-                        <div key={i} className="pt-1.5 space-y-1">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-medium text-foreground truncate max-w-[160px]">To: {sug.recipient}</span>
-                            <span className="text-[10px] text-muted-foreground">{sug.daysAgo}d ago</span>
+                    {msg.actionPayload.followUps.suggestions?.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground italic py-1">
+                        All pending follow-ups resolved or snoozed.
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-border/30 max-h-56 overflow-y-auto space-y-2 pr-0.5">
+                        {msg.actionPayload.followUps.suggestions?.map((sug: any, i: number) => (
+                          <div key={i} className="pt-2 space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-semibold text-foreground truncate max-w-[160px]">To: {sug.recipient}</span>
+                              <div className="flex items-center gap-1">
+                                {sug.hasCallToAction && sug.detectedCta && (
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-400 border-amber-500/30 bg-amber-950/30">
+                                    Ask: "{sug.detectedCta}"
+                                  </Badge>
+                                )}
+                                <span className="text-[10px] text-muted-foreground font-mono">{sug.daysAgo}d ago</span>
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-foreground/90 truncate font-medium">Re: {sug.subject}</p>
+                            <div className="p-2 rounded bg-background/60 border border-border/50 text-[10px] text-muted-foreground line-clamp-2 italic">
+                              "{sug.suggestedFollowUp.replace(/\n/g, ' ')}"
+                            </div>
+                            <div className="flex items-center gap-1.5 pt-0.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  onInsertDraftToComposer(
+                                    sug.suggestedFollowUp,
+                                    `Following up: ${sug.subject}`,
+                                    sug.recipient
+                                  )
+                                }
+                                className="flex-1 h-6 text-[10px] gap-1 text-sky-300 border-sky-500/30 hover:bg-sky-500/10 cursor-pointer"
+                              >
+                                <Mail className="h-3 w-3" />
+                                <span>Insert Nudge Draft</span>
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDismissFollowUp(sug.threadId, msg.id)}
+                                title="Dismiss or snooze reminder for 7 days"
+                                className="h-6 text-[10px] px-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                              >
+                                <span>Dismiss (7d)</span>
+                              </Button>
+                            </div>
                           </div>
-                          <p className="text-[11px] text-muted-foreground truncate font-medium">Re: {sug.subject}</p>
-                          <div className="p-2 rounded bg-background/60 border border-border/50 text-[10px] text-muted-foreground line-clamp-2 italic">
-                            "{sug.suggestedFollowUp.replace(/\n/g, ' ')}"
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              onInsertDraftToComposer(
-                                sug.suggestedFollowUp,
-                                `Following up: ${sug.subject}`,
-                                sug.recipient
-                              )
-                            }
-                            className="w-full h-6 text-[10px] gap-1 text-sky-300 border-sky-500/30 hover:bg-sky-500/10 cursor-pointer"
-                          >
-                            <Mail className="h-3 w-3" />
-                            <span>Insert Follow-up to Composer</span>
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

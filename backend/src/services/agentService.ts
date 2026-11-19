@@ -2080,8 +2080,8 @@ Return ONLY the drafted response body ready to send.`;
   }
 
   /**
-   * Scans sent threads where user has not received a response after 3-14 days
-   * and generates intelligent 1-click follow-up recommendations.
+   * Scans sent threads where user has not received a response after 2-14 days
+   * Detects implicit/explicit call-to-actions and generates 1-click follow-up recommendations.
    */
   static async getFollowUpSuggestions(userId: string) {
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
@@ -2097,22 +2097,25 @@ Return ONLY the drafted response body ready to send.`;
         },
       },
       include: {
-        account: { select: { emailAddress: true } },
+        account: { select: { id: true, emailAddress: true } },
         messages: {
           orderBy: { receivedAt: 'desc' },
           take: 1,
         },
       },
-      take: 10,
+      take: 20,
     });
 
     const suggestions: Array<{
       threadId: string;
+      accountId: string;
       subject: string;
       recipient: string;
       sentDate: string;
       daysAgo: number;
       lastSnippet: string;
+      hasCallToAction: boolean;
+      detectedCta?: string;
       suggestedFollowUp: string;
     }> = [];
 
@@ -2120,7 +2123,13 @@ Return ONLY the drafted response body ready to send.`;
       const lastMsg = thread.messages[0];
       if (!lastMsg) continue;
 
-      // Only flag if the last message was sent by the user themselves
+      // Check if user dismissed / snoozed this thread's follow-up
+      try {
+        const isDismissed = await redis.get(`mailr:followup:dismissed:${userId}:${thread.id}`);
+        if (isDismissed) continue;
+      } catch {}
+
+      // Only flag if the last message in the thread was sent by the user
       if (lastMsg.senderEmail.toLowerCase() === thread.account.emailAddress.toLowerCase()) {
         const recipients = Array.isArray(lastMsg.recipientList)
           ? (lastMsg.recipientList as string[])
@@ -2128,19 +2137,30 @@ Return ONLY the drafted response body ready to send.`;
         const recipient = recipients[0] || 'there';
         const daysAgo = Math.floor((Date.now() - new Date(lastMsg.receivedAt).getTime()) / (1000 * 60 * 60 * 24));
 
-        const suggestedFollowUp = `Hi ${recipient.split('@')[0] || ''},
+        // Call to action regex detection
+        const rawContent = `${lastMsg.snippet || ''} ${lastMsg.bodyText || ''}`;
+        const ctaMatch = rawContent.match(
+          /\b(let me know|thoughts\??|can you|could you|please\s+(?:review|send|confirm|update|check)|waiting for|any update|feedback|confirm|eta|timeline|when can|any chance)\b/i
+        );
 
-Following up on our email regarding "${thread.subject}". Please let me know if you've had a chance to look this over or if you need any additional information from my side.
+        const hasCta = Boolean(ctaMatch);
+        const detectedCta = ctaMatch ? ctaMatch[0] : undefined;
+        const cleanName = recipient.split('@')[0] || '';
 
-Best regards,`;
+        const suggestedFollowUp = hasCta
+          ? `Hi ${cleanName},\n\nJust following up on my previous note regarding "${thread.subject}". Wanted to check in and see if you had any thoughts or if you need any additional details from my side?\n\nBest regards,`
+          : `Hi ${cleanName},\n\nHope your week is going well! Just circling back on our conversation regarding "${thread.subject}". Please let me know if you've had a chance to look this over.\n\nBest regards,`;
 
         suggestions.push({
           threadId: thread.id,
+          accountId: thread.account.id,
           subject: thread.subject,
           recipient,
           sentDate: lastMsg.receivedAt.toISOString(),
           daysAgo,
           lastSnippet: lastMsg.snippet || '',
+          hasCallToAction: hasCta,
+          detectedCta,
           suggestedFollowUp,
         });
       }

@@ -441,6 +441,23 @@ router.get('/follow-ups', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// 17b. Dismiss or Snooze Follow-Up Reminder
+router.post('/follow-ups/dismiss', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { threadId, snoozeDays = 7 } = req.body;
+    if (!threadId) {
+      res.status(400).json({ error: 'threadId is required' });
+      return;
+    }
+    const ttlSeconds = Math.max(1, Number(snoozeDays)) * 24 * 60 * 60;
+    await redis.set(`mailr:followup:dismissed:${req.user!.id}:${threadId}`, '1', ttlSeconds);
+    res.json({ success: true, message: `Follow-up reminder dismissed for ${snoozeDays} days.` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Dismiss error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 // 18. Redis Caching & Distributed Bus Status
 router.get('/redis/status', async (_req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, ...redis.getStatus() });
