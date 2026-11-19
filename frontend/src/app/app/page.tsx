@@ -16,7 +16,7 @@ import { MorningBriefingDialog } from "@/components/morning-briefing-dialog";
 import { Button } from "@/components/ui/button";
 import { Sparkles, CheckCircle2, PenSquare, RotateCcw, Clock, Calendar, SunMedium, Keyboard, Inbox, Newspaper, Send, FileText, Trash2, Archive, Bot, Star, RefreshCw, Settings, PanelLeft, PanelLeftClose, PanelLeftOpen, Columns } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiFetch, getAuthToken, removeAuthToken, API_BASE_URL } from "@/lib/api";
+import { apiFetch, getAuthToken, setAuthToken, removeAuthToken, API_BASE_URL } from "@/lib/api";
 
 export default function AppMailPage() {
   const router = useRouter();
@@ -188,12 +188,22 @@ export default function AppMailPage() {
     }
   }, []);
 
+  // Auth State
+  const [authChecking, setAuthChecking] = React.useState(true);
+
   // Auth & Initial load
   const fetchData = React.useCallback(async () => {
     try {
       const token = getAuthToken();
       if (!token) {
-        router.push("/login");
+        // Only redirect if there's no code or token currently in URL query
+        if (typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          if (params.get("code") || params.get("token")) {
+            return;
+          }
+        }
+        router.replace("/login");
         return;
       }
 
@@ -202,7 +212,8 @@ export default function AppMailPage() {
       if (userRes && userRes.user) {
         setUser(userRes.user);
       } else {
-        router.push("/login");
+        removeAuthToken();
+        router.replace("/login");
         return;
       }
 
@@ -229,48 +240,71 @@ export default function AppMailPage() {
         setSelectedThreadId(fetchedThreads[0].id);
         fetchThreadDetail(fetchedThreads[0].id);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load initial data", err);
+      if (
+        err?.message?.includes("401") ||
+        err?.message?.includes("Unauthorized") ||
+        err?.message?.includes("Invalid token")
+      ) {
+        removeAuthToken();
+        router.replace("/login");
+      }
+    } finally {
+      setAuthChecking(false);
     }
   }, [router, selectedThreadId, fetchThreadDetail]);
 
-  // Check URL for OAuth callback code or legacy token
+  // Initial Boot Effect: Handle OAuth callback code or existing token
   React.useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const urlCode = params.get("code");
-      const urlToken = params.get("token");
-      const email = params.get("email");
-      const provider = params.get("provider");
+    if (typeof window === "undefined") return;
 
-      if (urlCode) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-        apiFetch<{ token: string; user: any }>("/api/auth/exchange-code", {
-          method: "POST",
-          body: JSON.stringify({ code: urlCode }),
-        })
-          .then((res) => {
-            if (res.token) {
-              localStorage.setItem("mailr_token", res.token);
-              if (email) {
-                showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
-              }
-              fetchData();
+    const params = new URLSearchParams(window.location.search);
+    const urlCode = params.get("code");
+    const urlToken = params.get("token");
+    const email = params.get("email");
+    const provider = params.get("provider");
+
+    if (urlCode) {
+      apiFetch<{ token: string; user: any }>("/api/auth/exchange-code", {
+        method: "POST",
+        body: JSON.stringify({ code: urlCode }),
+      })
+        .then((res) => {
+          if (res.token) {
+            setAuthToken(res.token);
+            if (res.user) {
+              localStorage.setItem("mailr_user", JSON.stringify(res.user));
             }
-          })
-          .catch((err) => {
-            console.error("Failed to exchange OAuth code for session token", err);
-          });
-      } else if (urlToken) {
-        localStorage.setItem("mailr_token", urlToken);
-        if (email) {
-          showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
-        }
-        window.history.replaceState({}, document.title, window.location.pathname);
+            if (email) {
+              showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
+            }
+            window.history.replaceState({}, document.title, window.location.pathname);
+            fetchData();
+          } else {
+            router.replace("/login?error=oauth_failed");
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to exchange OAuth code for session token", err);
+          router.replace("/login?error=" + encodeURIComponent(err.message || "oauth_failed"));
+        });
+    } else if (urlToken) {
+      setAuthToken(urlToken);
+      if (email) {
+        showToast(`Authenticated via ${provider || "OAuth"} (${email})`);
+      }
+      window.history.replaceState({}, document.title, window.location.pathname);
+      fetchData();
+    } else {
+      const token = getAuthToken();
+      if (!token) {
+        router.replace("/login");
+      } else {
         fetchData();
       }
     }
-  }, [fetchData]);
+  }, [fetchData, router]);
 
   // Prompt for desktop notifications on initial mount if supported
   React.useEffect(() => {
@@ -281,8 +315,7 @@ export default function AppMailPage() {
 
   // SSE Real-time Live Stream: Incoming emails appear directly in the client
   React.useEffect(() => {
-    fetchData();
-
+    if (authChecking) return;
     const token = getAuthToken();
     if (!token) return;
 
@@ -846,6 +879,17 @@ export default function AppMailPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [filteredThreads, selectedThreadId, selectedThread, undoSendQueue, handleToggleRail]);
+
+  if (authChecking && !user) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#070a12] text-slate-300">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+          <p className="text-xs font-mono tracking-wider text-slate-400">Loading Mailr Client...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <SidebarProvider

@@ -10,11 +10,11 @@ export default function RootPage() {
   useEffect(() => {
     const token = getAuthToken();
     if (token) {
-      router.replace('/app');
+      window.location.href = '/app';
     } else {
-      router.replace('/login');
+      window.location.href = '/login';
     }
-  }, [router]);
+  }, []);
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-[#070a12] text-slate-300">

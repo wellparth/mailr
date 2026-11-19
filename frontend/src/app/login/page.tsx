@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Mail, Lock, ArrowRight, AlertCircle, X, CheckCircle2 } from 'lucide-react';
-import { apiFetch, setAuthToken } from '@/lib/api';
+import { apiFetch, setAuthToken, getAuthToken } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +12,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Auto-redirect if already authenticated
+  useEffect(() => {
+    if (getAuthToken()) {
+      window.location.href = '/app';
+    }
+  }, []);
 
   // OAuth Modal State
   const [oauthModalProvider, setOauthModalProvider] = useState<'google' | 'microsoft' | null>(null);
@@ -36,7 +43,7 @@ export default function LoginPage() {
 
       setAuthToken(data.token);
       localStorage.setItem('mailr_user', JSON.stringify(data.user));
-      router.push('/app');
+      window.location.href = '/app';
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid credentials');
     } finally {
@@ -89,7 +96,7 @@ export default function LoginPage() {
       setAuthToken(data.token);
       localStorage.setItem('mailr_user', JSON.stringify(data.user));
       setOauthModalProvider(null);
-      router.push('/app');
+      window.location.href = '/app';
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'OAuth sign in failed');
     } finally {
