@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
@@ -12,72 +14,82 @@ import {
   Terminal,
   Zap,
   Lock,
-  Globe,
-  Inbox,
-  Filter,
+  HardDrive,
+  Cpu,
+  BookOpen,
+  Server,
+  Download,
 } from 'lucide-react';
 
 export default function HomePage() {
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col min-h-screen bg-[#070a12] text-slate-200">
       <Navbar />
 
       <main className="flex-1">
         {/* HERO SECTION */}
-        <section className="relative overflow-hidden pt-20 pb-28 md:pt-32 md:pb-36">
-          {/* Subtle glow background */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] bg-gradient-to-tr from-indigo-600/20 via-violet-600/15 to-transparent blur-[140px] pointer-events-none rounded-full" />
+        <section className="relative overflow-hidden pt-20 pb-24 md:pt-32 md:pb-32">
+          {/* Ambient Glow */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[450px] bg-gradient-to-tr from-indigo-600/20 via-violet-600/15 to-transparent blur-[130px] pointer-events-none rounded-full" />
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
             {/* Pill Announcement */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium mb-8">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold mb-8">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>100% Self-Hostable &amp; Sovereign Multi-Inbox Client with AI</span>
+              <span>100% Free &amp; Open Source &bull; Self-Hostable Email Client &amp; AI Agent</span>
             </div>
 
             {/* Headline */}
             <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-[1.1]">
-              One client for every inbox you own.{' '}
+              One inbox for all your email.{' '}
               <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-indigo-200 bg-clip-text text-transparent">
-                Hosted on your own VPS.
+                Self-hosted on your VPS.
               </span>
             </h1>
 
             {/* Subheading */}
-            <p className="mt-6 text-lg sm:text-xl text-slate-300 max-w-2xl mx-auto leading-relaxed">
-              Connect Google Workspace, Microsoft 365, Apple iCloud, and custom domain IMAP/SMTP into a unified view. All emails, full message bodies, and AI Copilot chats are stored locally in your own database—zero subscriptions, zero tracking ads, and complete data sovereignty.
+            <p className="mt-6 text-base sm:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
+              Connect Google Workspace, Microsoft 365, Apple iCloud, and custom domain IMAP/SMTP into a unified workspace. All messages and AI Copilot chats are stored locally in your database—no SaaS subscriptions, zero telemetry, and complete data sovereignty.
             </p>
 
-            {/* CTAs */}
+            {/* Main Action CTAs */}
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 href="/app"
-                className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-violet-600 text-white font-semibold text-base shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-violet-600 text-white font-semibold text-sm shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all"
               >
-                <span>Launch Mailr Web App</span>
-                <ArrowRight className="w-5 h-5" />
+                <span>Launch Mailr Client</span>
+                <ArrowRight className="w-4 h-4" />
               </Link>
               <Link
-                href="/about"
-                className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-600 text-slate-200 font-semibold text-base hover:bg-slate-800 transition-all"
+                href="/docs"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-600 text-slate-200 font-semibold text-sm hover:bg-slate-800 transition-all"
               >
-                Read Architectural Blueprint
+                <BookOpen className="w-4 h-4 text-indigo-400" />
+                <span>Read Documentation</span>
+              </Link>
+              <Link
+                href="/pricing"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white font-medium text-sm transition-all"
+              >
+                <Server className="w-4 h-4" />
+                <span>Docker VPS Setup</span>
               </Link>
             </div>
 
             {/* Provider Support Chips */}
-            <div className="mt-14 pt-10 border-t border-slate-800/60 max-w-4xl mx-auto">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-medium mb-5">
+            <div className="mt-14 pt-8 border-t border-slate-800/60 max-w-4xl mx-auto">
+              <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-4">
                 Native Adapters for Any Email Provider
               </p>
-              <div className="flex flex-wrap items-center justify-center gap-3">
+              <div className="flex flex-wrap items-center justify-center gap-2.5">
                 {[
                   { name: 'Google Workspace / Gmail', color: 'border-red-500/30 text-red-300 bg-red-500/10' },
                   { name: 'Microsoft 365 / Outlook', color: 'border-blue-500/30 text-blue-300 bg-blue-500/10' },
                   { name: 'Apple iCloud Mail', color: 'border-sky-500/30 text-sky-300 bg-sky-500/10' },
                   { name: 'Custom Domain IMAP & SMTP', color: 'border-purple-500/30 text-purple-300 bg-purple-500/10' },
-                  { name: 'Zoho Mail', color: 'border-amber-500/30 text-amber-300 bg-amber-500/10' },
                   { name: 'Fastmail / Proton Bridge', color: 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10' },
+                  { name: 'Zoho Mail', color: 'border-amber-500/30 text-amber-300 bg-amber-500/10' },
                 ].map((item) => (
                   <span
                     key={item.name}
@@ -88,287 +100,168 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
-
-            {/* Interactive Email Client Mockup Preview (UI/UX Pro Max Glass Card) */}
-            <div className="mt-16 relative mx-auto max-w-5xl rounded-3xl border border-white/[0.1] bg-slate-900/80 backdrop-blur-2xl shadow-2xl shadow-indigo-950/60 overflow-hidden text-left glow-ambient">
-              {/* Window Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-[#0c121e]/90 backdrop-blur-md">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500/80 shadow-sm shadow-red-500/50" />
-                  <div className="w-3 h-3 rounded-full bg-yellow-500/80 shadow-sm shadow-yellow-500/50" />
-                  <div className="w-3 h-3 rounded-full bg-green-500/80 shadow-sm shadow-green-500/50" />
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-300 bg-slate-800/80 px-3.5 py-1 rounded-lg border border-white/[0.08] shadow-inner">
-                  <Terminal className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="font-mono text-[11px]">Cmd+K: &quot;Archive newsletters older than 7 days&quot;</span>
-                </div>
-                <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Live Interface</span>
-                </div>
-              </div>
-
-              {/* Mockup Body: 3-pane email client layout */}
-              <div className="grid grid-cols-12 h-[380px] text-xs">
-                {/* Left Mini Rail */}
-                <div className="col-span-3 border-r border-slate-800/80 bg-[#090d16] p-3 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-slate-400 text-[11px] font-semibold uppercase tracking-wider">
-                      <span>Accounts</span>
-                      <span className="text-emerald-400 font-mono">3 Online</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="p-2 rounded-lg bg-indigo-600/20 border border-indigo-500/40 text-white flex items-center justify-between">
-                        <span className="font-medium">All Inboxes</span>
-                        <span className="px-1.5 py-0.5 rounded-full bg-indigo-500 text-[10px] font-bold">14</span>
-                      </div>
-                      <div className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-300 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
-                        <span className="truncate">alex@acme-corp.com</span>
-                      </div>
-                      <div className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-300 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                        <span className="truncate">alex@gmail.com</span>
-                      </div>
-                      <div className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-300 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-purple-500" />
-                        <span className="truncate">founder@startup.io</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center gap-2 text-indigo-300">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span className="text-[10px]">AES-256 Encrypted</span>
-                  </div>
-                </div>
-
-                {/* Middle Messages List */}
-                <div className="col-span-4 border-r border-slate-800/80 bg-slate-950 p-2 space-y-2 overflow-y-auto">
-                  {/* Urgent Email Card */}
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-red-500/40 text-white space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-100">Elena Rostova</span>
-                      <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[9px] font-bold">
-                        P1 URGENT
-                      </span>
-                    </div>
-                    <div className="font-medium text-[11px] truncate text-slate-200">
-                      URGENT: Signed Term Sheet & Legal Review required
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate">
-                      The partners require your counter-signature before 5 PM...
-                    </div>
-                  </div>
-
-                  {/* Meeting Proposal Card */}
-                  <div className="p-2.5 rounded-lg bg-slate-900/60 border border-indigo-500/30 text-slate-200 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-slate-200">David Chen</span>
-                      <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold">
-                        CALENDAR
-                      </span>
-                    </div>
-                    <div className="font-medium text-[11px] truncate text-slate-300">
-                      Quick Sync: Architecture Review & VPS Setup
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate">
-                      Are you available tomorrow at 3:00 PM for 30 mins?
-                    </div>
-                  </div>
-
-                  {/* Normal Email */}
-                  <div className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-800 text-slate-400 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span>Cloudflare Billing</span>
-                      <span className="text-[9px]">3h ago</span>
-                    </div>
-                    <div className="truncate text-slate-300 font-medium">Invoice #INV-2026-904 processed</div>
-                  </div>
-                </div>
-
-                {/* Right Reading View */}
-                <div className="col-span-5 bg-[#090d16] p-4 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    {/* Meeting Proposal Banner */}
-                    <div className="p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-indigo-200 space-y-1.5">
-                      <div className="flex items-center gap-1.5 font-semibold text-[11px] text-indigo-300">
-                        <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Proposed Booking: Quick Sync with David</span>
-                      </div>
-                      <div className="text-[10px] text-slate-300">
-                        Tomorrow at 3:00 PM - 3:30 PM (30 mins)
-                      </div>
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium text-[10px]">
-                          Accept & Add to Calendar
-                        </span>
-                        <span className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer">
-                          Export .ics
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <h3 className="font-bold text-slate-100 text-sm">
-                        Quick Sync: Architecture Review & VPS Setup
-                      </h3>
-                      <p className="text-[11px] text-slate-400">From: david@engineers.dev → To: founder@startup.io</p>
-                    </div>
-
-                    <p className="text-slate-300 text-[11px] leading-relaxed">
-                      Hey Alex, I reviewed the Mailr Next.js frontend and Express backend. Would love to sync up tomorrow at 3:00 PM to finalize our Docker VPS deployment strategy.
-                    </p>
-                  </div>
-
-                  {/* AI Quick Reply Chips */}
-                  <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
-                    <span className="text-[10px] text-slate-400">AI Reply:</span>
-                    <span className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] cursor-pointer">
-                      Sounds good, booked!
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] cursor-pointer">
-                      Propose 4 PM instead
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </section>
 
-        {/* THREE CORE SUPERPOWERS SECTION */}
-        <section id="features" className="py-24 bg-[#070a12] border-t border-slate-800/80">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-xs uppercase tracking-wider text-indigo-400 font-semibold mb-3">
-                Core Architectural Pillars
+        {/* 4 CORE ARCHITECTURAL PILLARS */}
+        <section id="features" className="py-20 bg-[#090d16] border-y border-slate-800/80">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+            <div className="text-center max-w-3xl mx-auto space-y-3">
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                Designed for Speed, Privacy, and AI Autonomy
               </h2>
-              <p className="text-3xl sm:text-4xl font-extrabold text-white">
-                Engineered for speed, focus, and total inbox sovereignty.
+              <p className="text-sm sm:text-base text-slate-400">
+                Everything you need to command multiple email accounts from a single sovereign workspace.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Feature 1 */}
-              <div className="p-8 rounded-3xl glass-card space-y-4 hover:border-indigo-500/30">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shadow-sm shadow-indigo-500/20">
-                  <Terminal className="w-6 h-6" />
+              <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3.5 hover:border-slate-700 transition-colors">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                  <Mail className="w-5 h-5" />
                 </div>
-                <h3 className="text-xl font-bold text-white tracking-tight">Natural Language Triage</h3>
-                <p className="text-sm text-slate-300 leading-relaxed">
-                  Press <kbd className="px-1.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-mono">Cmd+K</kbd> and give natural instructions. Mailr parses the intent and bulk modifies your inboxes without tedious manual filters.
+                <h3 className="text-lg font-bold text-white">Unified Multi-Inbox</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Manage work, personal, and freelance emails side-by-side with color badges, instant cross-account search, and unread filters.
                 </p>
-                <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/[0.06] text-xs font-mono text-indigo-300">
-                  &quot;Archive all GitHub notifications older than 3 days&quot;
-                </div>
               </div>
 
               {/* Feature 2 */}
-              <div className="p-8 rounded-3xl glass-card space-y-4 hover:border-red-500/30">
-                <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 shadow-sm shadow-red-500/20">
-                  <Zap className="w-6 h-6" />
+              <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3.5 hover:border-slate-700 transition-colors">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                  <Cpu className="w-5 h-5" />
                 </div>
-                <h3 className="text-xl font-bold text-white tracking-tight">Priority Inbox Surfacing</h3>
-                <p className="text-sm text-slate-300 leading-relaxed">
-                  Never miss crucial contracts, client questions, or server alerts. Mailr automatically scores every incoming thread and filters your view down to actionable P1/P2 priorities.
+                <h3 className="text-lg font-bold text-white">13 Autonomous AI Tools</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Natural language Copilot executes tools to triage inbox, draft replies, detect spam, clean newsletters, and schedule calendar events.
                 </p>
-                <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold pt-1">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Cuts daily email noise by up to 75%</span>
-                </div>
               </div>
 
               {/* Feature 3 */}
-              <div className="p-8 rounded-3xl glass-card space-y-4 hover:border-violet-500/30">
-                <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shadow-sm shadow-violet-500/20">
-                  <Calendar className="w-6 h-6" />
+              <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3.5 hover:border-slate-700 transition-colors">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <HardDrive className="w-5 h-5" />
                 </div>
-                <h3 className="text-xl font-bold text-white tracking-tight">Calendar Booking Proposals</h3>
-                <p className="text-sm text-slate-300 leading-relaxed">
-                  When a client asks for a meeting, Mailr extracts the time, participants, and subject, generating one-click calendar events or downloadable standard <code className="text-violet-300">.ics</code> files.
+                <h3 className="text-lg font-bold text-white">100% Local Storage</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Full message text, threads, and AI chats are stored locally in your own MySQL + Redis instances. AES-256-GCM encrypted credentials.
                 </p>
-                <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold pt-1">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Supports Google Calendar, Outlook & Apple</span>
+              </div>
+
+              {/* Feature 4 */}
+              <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3.5 hover:border-slate-700 transition-colors">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                  <Download className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-bold text-white">On-Demand Attachments</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Bypasses heavy PDFs and ZIPs during sync to keep your DB tiny. Fetches files on-demand directly from the mail provider with disk caching.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* AI MODEL FREEDOM SECTION */}
+        <section className="py-20 bg-[#070a12]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="p-8 sm:p-12 rounded-3xl bg-slate-900 border border-slate-800 space-y-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-800 pb-8">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-semibold">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Bring-Your-Own-Key (BYOK) Freedom</span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
+                    Power Your Copilot with Any LLM
+                  </h2>
+                  <p className="text-sm text-slate-400">
+                    No token markups or model lock-in. Switch providers in Settings or run 100% private models on your own GPU.
+                  </p>
+                </div>
+
+                <Link
+                  href="/docs"
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
+                >
+                  <span>Explore Model Docs</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-white block">NVIDIA NIM</span>
+                  <p className="text-slate-400">High-throughput models: Nemotron 3.5, Llama 3.3 70B, Mixtral 8x22B.</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-white block">OpenAI</span>
+                  <p className="text-slate-400">GPT-4o and GPT-4o-mini with live model catalog discovery.</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-white block">Anthropic Claude</span>
+                  <p className="text-slate-400">Claude 3.5 Sonnet &amp; Haiku for nuanced email drafting.</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-white block">Local LLM (Ollama)</span>
+                  <p className="text-slate-400">Run completely offline on your own machine at localhost:11434.</p>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* SECURITY & ZERO-KNOWLEDGE SECTION */}
-        <section className="py-24 bg-[#090d16] border-t border-slate-800/80">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-              <div className="space-y-6">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Zero-Knowledge Security</span>
-                </div>
-                <h2 className="text-3xl sm:text-4xl font-extrabold text-white">
-                  Your credentials are never stored in plaintext. Period.
-                </h2>
-                <p className="text-base text-slate-300 leading-relaxed">
-                  Every OAuth refresh token, IMAP/SMTP password, and Bring-Your-Own (BYOK) AI API key is encrypted using AES-256-GCM authenticated cipher with unique 12-byte initialization vectors and integrity tags.
-                </p>
+        {/* 1-COMMAND QUICKSTART */}
+        <section className="py-20 bg-[#090d16] border-t border-slate-800/80">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
+              Deploy Mailr on Your VPS in 60 Seconds
+            </h2>
+            <p className="text-sm text-slate-400 max-w-xl mx-auto">
+              Single command launch with Docker Compose. Nginx, MySQL, Redis, and Next.js bundled together.
+            </p>
 
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
-                    <p className="text-sm text-slate-300">
-                      <strong className="text-white">Strict Tenant Isolation:</strong> Messages and tokens are cryptographically bounded to your user account.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
-                    <p className="text-sm text-slate-300">
-                      <strong className="text-white">100% Local Storage:</strong> All emails, full message bodies, and Copilot AI chat histories are stored locally on your own server (MySQL + Redis). No third-party cloud reading your mail.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
-                    <p className="text-sm text-slate-300">
-                      <strong className="text-white">Self-Hosted Data Sovereignty:</strong> Deploy on your own Ubuntu/Debian VPS or local machine with Docker Compose. Zero subscriptions, zero tracking ads, 100% free.
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-xs text-left text-emerald-400 overflow-x-auto shadow-xl">
+              <span className="text-slate-500"># Clone &amp; Launch</span>
+              <br />
+              git clone https://github.com/wellparth/mailr.git &amp;&amp; cd mailr
+              <br />
+              docker compose up --build -d
+            </div>
 
-              {/* Encryption Code Card */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 font-mono text-xs text-slate-300 shadow-xl overflow-x-auto">
-                <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4 text-slate-400">
-                  <span>backend/src/utils/crypto.ts</span>
-                  <span className="text-emerald-400">AES-256-GCM Verified</span>
-                </div>
-                <pre className="text-slate-300">
-{`const cipher = crypto.createCipheriv('aes-256-gcm', MASTER_KEY, iv);
-let encrypted = cipher.update(plainToken, 'utf8', 'hex');
-encrypted += cipher.final('hex');
-const authTag = cipher.getAuthTag().toString('hex');
-
-// Stored in MySQL as iv:authTag:ciphertext
-return \`\${iv.toString('hex')}:\${authTag}:\${encrypted}\`;`}
-                </pre>
-              </div>
+            <div className="pt-2 flex items-center justify-center gap-4">
+              <Link
+                href="/docs"
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1.5"
+              >
+                <span>Read Full Setup &amp; Provider Guides &rarr;</span>
+              </Link>
             </div>
           </div>
         </section>
 
         {/* CALL TO ACTION */}
-        <section className="py-20 bg-gradient-to-b from-[#090d16] to-[#0d1321] border-t border-slate-800/80 text-center">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl sm:text-5xl font-extrabold text-white">
-              Ready to take control of your inboxes?
+        <section className="py-20 bg-gradient-to-b from-[#090d16] to-[#070a12] text-center border-t border-slate-800/80">
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-white">
+              Ready to own your email client?
             </h2>
-            <p className="mt-4 text-base sm:text-lg text-slate-300 max-w-xl mx-auto">
-              Launch the web app now to test with pre-seeded demo accounts or connect your own Google, Outlook, and IMAP mailboxes in seconds.
+            <p className="text-sm sm:text-base text-slate-400 max-w-xl mx-auto">
+              Launch the client in your browser or self-host your own instance with Docker.
             </p>
-            <div className="mt-8 flex items-center justify-center gap-4">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 href="/app"
-                className="px-8 py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-violet-600 text-white font-semibold text-base shadow-xl shadow-indigo-500/30 hover:scale-[1.02] transition-transform"
+                className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-semibold text-sm shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/40 transition-all"
               >
-                Launch Mailr App →
+                Launch Mailr App
+              </Link>
+              <Link
+                href="/docs"
+                className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 text-white font-semibold text-sm transition-colors"
+              >
+                Documentation
               </Link>
             </div>
           </div>
