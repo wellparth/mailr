@@ -116,6 +116,9 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
   React.useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data && e.data.type === "MAILR_IFRAME_HEIGHT" && typeof e.data.height === "number") {
+        if (e.source && iframeRef.current && e.source !== iframeRef.current.contentWindow) {
+          return;
+        }
         if (e.data.height > 50) {
           setIframeHeight(Math.min(e.data.height + 24, 12000));
         }

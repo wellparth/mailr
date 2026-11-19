@@ -32,6 +32,10 @@ import {
   Copy,
   Share2,
   Forward,
+  ChevronDown,
+  ChevronUp,
+  MessageSquare,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -333,10 +337,53 @@ export function MailDisplay({
     );
   }
 
-  const latestMessage = thread.messages[0];
+  const sortedMessages = React.useMemo(() => {
+    return [...(thread?.messages || [])].sort(
+      (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
+    );
+  }, [thread?.messages]);
+
+  const latestMessage = sortedMessages[sortedMessages.length - 1] || thread.messages[0];
   const proposals = latestMessage?.calendarProposals || [];
   const attachments = latestMessage?.attachments || [];
   const [downloadingAttId, setDownloadingAttId] = React.useState<string | null>(null);
+
+  // Tracking expanded messages for long thread conversation histories
+  const [expandedMessageIds, setExpandedMessageIds] = React.useState<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (sortedMessages.length > 0) {
+      const latest = sortedMessages[sortedMessages.length - 1];
+      const initialExpanded = new Set<string>([latest.id]);
+      // Auto-expand any unread message
+      sortedMessages.forEach((m) => {
+        if (!m.isRead) initialExpanded.add(m.id);
+      });
+      setExpandedMessageIds(initialExpanded);
+    }
+  }, [thread?.id, sortedMessages.length]);
+
+  const toggleExpand = (msgId: string) => {
+    setExpandedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) {
+        next.delete(msgId);
+      } else {
+        next.add(msgId);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedMessageIds(new Set(sortedMessages.map((m) => m.id)));
+  };
+
+  const collapseAll = () => {
+    if (sortedMessages.length > 0) {
+      setExpandedMessageIds(new Set([sortedMessages[sortedMessages.length - 1].id]));
+    }
+  };
 
   const handleDownloadAttachment = (att: AttachmentItem) => {
     try {
@@ -857,43 +904,57 @@ export function MailDisplay({
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* Thread Subject Title & Metadata */}
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
-            {thread.subject || "(No Subject)"}
-          </h1>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground flex-1">
+              {thread.subject || "(No Subject)"}
+            </h1>
+            {/* Connected Account Tag Pill */}
+            <span
+              className="px-2.5 py-1 rounded-full text-xs font-medium border shrink-0 flex items-center gap-1.5"
+              style={{
+                borderColor: `${thread.account?.colorCode || '#38bdf8'}40`,
+                backgroundColor: `${thread.account?.colorCode || '#38bdf8'}15`,
+                color: thread.account?.colorCode || '#38bdf8',
+              }}
+              title={`Belongs to inbox: ${thread.account?.emailAddress}`}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: thread.account?.colorCode || '#38bdf8' }} />
+              {thread.account?.displayName || thread.account?.emailAddress}
+            </span>
+          </div>
 
-          <div className="flex items-center justify-between mt-3 pb-3 border-b border-border/50">
-            <div className="flex items-center gap-3">
-              <Avatar className="h-9 w-9 border border-border">
-                <AvatarFallback className="text-xs font-semibold bg-secondary text-foreground">
-                  {latestMessage?.senderName ? latestMessage.senderName[0].toUpperCase() : "M"}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">
-                    {latestMessage?.senderName || latestMessage?.senderEmail}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    &lt;{latestMessage?.senderEmail}&gt;
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  to {latestMessage?.recipientList?.join(", ") || thread.account.emailAddress}
-                </div>
-              </div>
-            </div>
-
-            <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              <span>
-                {latestMessage?.receivedAt
-                  ? new Date(latestMessage.receivedAt).toLocaleString([], {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })
-                  : ""}
+          {/* Conversation History Overview Bar */}
+          <div className="flex items-center justify-between mt-3 pb-3 border-b border-border/50 text-xs">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <MessageSquare className="h-3.5 w-3.5 text-sky-400" />
+              <span className="font-medium text-foreground">
+                {sortedMessages.length} message{sortedMessages.length === 1 ? "" : "s"} in thread
+              </span>
+              <span className="text-border">•</span>
+              <span className="truncate max-w-xs">
+                With: {Array.from(new Set(sortedMessages.map((m) => m.senderName || m.senderEmail))).slice(0, 3).join(", ")}
               </span>
             </div>
+
+            {sortedMessages.length > 1 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={expandAll}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 font-medium hover:underline cursor-pointer"
+                >
+                  Expand all ({sortedMessages.length})
+                </button>
+                <span className="text-border">•</span>
+                <button
+                  type="button"
+                  onClick={collapseAll}
+                  className="text-[11px] text-muted-foreground hover:text-foreground font-medium hover:underline cursor-pointer"
+                >
+                  Collapse previous
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1067,223 +1128,343 @@ export function MailDisplay({
           </div>
         )}
 
-        {/* Calendar Booking Proposals Card */}
-        {proposals.length > 0 && (
-          <div className="space-y-3">
-            {proposals.map((prop) => (
-              <div
-                key={prop.id}
-                className="bg-card border border-sky-500/30 rounded-xl p-4 shadow-sm relative overflow-hidden"
-              >
-                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-500 to-indigo-500" />
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 mt-0.5">
-                      <Calendar className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-sky-400 uppercase tracking-wider">
-                          Proposed Calendar Meeting
-                        </span>
-                        <Badge className="bg-sky-950 text-sky-300 border-sky-500/30 text-[10px] py-0 px-1.5">
-                          {prop.status}
-                        </Badge>
-                      </div>
-                      <h4 className="text-sm font-semibold text-foreground mt-1">
-                        {prop.title}
-                      </h4>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {new Date(prop.startTime).toLocaleString([], {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}{" "}
-                        -{" "}
-                        {new Date(prop.endTime).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}{" "}
-                        ({prop.timezone})
-                      </p>
-                      {prop.description && (
-                        <p className="text-xs text-muted-foreground/80 mt-1.5 italic">
-                          "{prop.description}"
-                        </p>
-                      )}
+        {/* Conversation Message History Stack (Supports Deep Multi-Turn Conversations) */}
+        <div className="space-y-4">
+          {sortedMessages.map((msg, idx) => {
+            const isLatest = idx === sortedMessages.length - 1;
+            const isExpanded = expandedMessageIds.has(msg.id);
+            const msgAttachments = msg.attachments || [];
+            const msgProposals = msg.calendarProposals || [];
+            const isNewsletterMsg = Boolean(
+              msg.bodyHtml?.match(/unsubscribe|optout|opt-out/i) ||
+              msg.subject?.match(/newsletter|digest|weekly/i)
+            );
+
+            if (!isExpanded) {
+              return (
+                <div
+                  key={msg.id}
+                  onClick={() => toggleExpand(msg.id)}
+                  className="group flex items-center justify-between p-3 rounded-xl border border-border/60 bg-secondary/20 hover:bg-secondary/40 hover:border-border transition-all cursor-pointer shadow-sm"
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <Avatar className="h-7 w-7 border border-border shrink-0">
+                      <AvatarFallback className="text-[10px] font-semibold bg-secondary text-foreground">
+                        {msg.senderName ? msg.senderName[0].toUpperCase() : (msg.senderEmail ? msg.senderEmail[0].toUpperCase() : "M")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-xs font-semibold text-foreground truncate max-w-[160px] sm:max-w-[200px]">
+                        {msg.senderName || msg.senderEmail}
+                      </span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        {msg.snippet || msg.bodyText?.slice(0, 100) || "No preview text"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Calendar Action Buttons */}
-                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                    <a
-                      href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
-                        prop.title
-                      )}&dates=${new Date(prop.startTime).toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${new Date(
-                        prop.endTime
-                      ).toISOString().replace(/[-:]/g, "").split(".")[0]}Z&details=${encodeURIComponent(
-                        prop.description || ""
-                      )}&add=${encodeURIComponent(latestMessage?.senderEmail || "")}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                      <span>Google Cal</span>
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
+                  <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                    {msgAttachments.length > 0 && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded border border-border/40">
+                        <Paperclip className="h-3 w-3 text-sky-400" />
+                        <span>{msgAttachments.length}</span>
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                      {new Date(msg.receivedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-transform" />
+                  </div>
+                </div>
+              );
+            }
 
-                    <a
-                      href={`https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(
-                        prop.title
-                      )}&body=${encodeURIComponent(prop.description || "")}&startdt=${encodeURIComponent(
-                        new Date(prop.startTime).toISOString()
-                      )}&enddt=${encodeURIComponent(new Date(prop.endTime).toISOString())}&to=${encodeURIComponent(
-                        latestMessage?.senderEmail || ""
-                      )}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                      <span>Outlook</span>
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
+            return (
+              <div
+                key={msg.id}
+                className={`rounded-2xl border transition-all shadow-sm overflow-hidden ${
+                  isLatest
+                    ? "bg-card border-border/80 ring-1 ring-border/50"
+                    : "bg-card/70 border-border/60"
+                }`}
+              >
+                {/* Message Header */}
+                <div
+                  onClick={() => toggleExpand(msg.id)}
+                  className="flex items-center justify-between p-4 border-b border-border/40 bg-secondary/10 hover:bg-secondary/20 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="h-9 w-9 border border-border shrink-0">
+                      <AvatarFallback className="text-xs font-semibold bg-secondary text-foreground">
+                        {msg.senderName ? msg.senderName[0].toUpperCase() : (msg.senderEmail ? msg.senderEmail[0].toUpperCase() : "M")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground truncate">
+                          {msg.senderName || msg.senderEmail}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate hidden sm:inline">
+                          &lt;{msg.senderEmail}&gt;
+                        </span>
+                        {isLatest && (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-sky-500/10 text-sky-400 border-sky-500/30">
+                            Latest
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                        to {msg.recipientList?.join(", ") || thread.account.emailAddress}
+                      </div>
+                    </div>
+                  </div>
 
+                  <div className="flex items-center gap-3 shrink-0 ml-3">
+                    <div className="text-right">
+                      <div className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        <span>
+                          {new Date(msg.receivedAt).toLocaleString([], {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })}
+                        </span>
+                      </div>
+                    </div>
                     <Button
+                      variant="ghost"
                       size="sm"
-                      variant="outline"
-                      onClick={() => handleDownloadIcs(prop)}
-                      className="text-xs h-8 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="Collapse message"
                     >
-                      <Download className="h-3.5 w-3.5" />
-                      <span>.ics File</span>
+                      <ChevronUp className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
 
-        {/* 1-Click Newsletter Unsubscribe Banner */}
-        {Boolean(latestMessage?.bodyHtml?.match(/unsubscribe|optout|opt-out/i) || latestMessage?.subject?.match(/newsletter|digest|weekly/i)) && !unsubscribed && (
-          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between text-xs text-amber-200">
-            <div className="flex items-center gap-2">
-              <MailX className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Newsletter / marketing email detected.</span>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={unsubscribing}
-              onClick={handleUnsubscribe}
-              className="h-7 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-500/20 hover:text-amber-200 cursor-pointer"
-            >
-              {unsubscribing ? "Unsubscribing..." : "Unsubscribe in 1-Click"}
-            </Button>
-          </div>
-        )}
+                <div className="p-5 space-y-5">
+                  {/* Calendar Booking Proposals Card */}
+                  {msgProposals.length > 0 && (
+                    <div className="space-y-3">
+                      {msgProposals.map((prop) => (
+                        <div
+                          key={prop.id}
+                          className="bg-card border border-sky-500/30 rounded-xl p-4 shadow-sm relative overflow-hidden"
+                        >
+                          <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-500 to-indigo-500" />
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 mt-0.5">
+                                <Calendar className="h-5 w-5" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-sky-400 uppercase tracking-wider">
+                                    Proposed Calendar Meeting
+                                  </span>
+                                  <Badge className="bg-sky-950 text-sky-300 border-sky-500/30 text-[10px] py-0 px-1.5">
+                                    {prop.status}
+                                  </Badge>
+                                </div>
+                                <h4 className="text-sm font-semibold text-foreground mt-1">
+                                  {prop.title}
+                                </h4>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {new Date(prop.startTime).toLocaleString([], {
+                                    weekday: "short",
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}{" "}
+                                  -{" "}
+                                  {new Date(prop.endTime).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}{" "}
+                                  ({prop.timezone})
+                                </p>
+                                {prop.description && (
+                                  <p className="text-xs text-muted-foreground/80 mt-1.5 italic">
+                                    "{prop.description}"
+                                  </p>
+                                )}
+                              </div>
+                            </div>
 
-        {/* Email Message Content (Isolated Sandboxed Iframe Viewer) */}
-        <div className="space-y-4">
-          <SandboxedEmailBody
-            html={latestMessage?.bodyHtml || ""}
-            fallbackText={latestMessage?.bodyText || latestMessage?.snippet || "No text body available."}
-          />
-        </div>
+                            {/* Calendar Action Buttons */}
+                            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                              <a
+                                href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                                  prop.title
+                                )}&dates=${new Date(prop.startTime).toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${new Date(
+                                  prop.endTime
+                                ).toISOString().replace(/[-:]/g, "").split(".")[0]}Z&details=${encodeURIComponent(
+                                  prop.description || ""
+                                )}&add=${encodeURIComponent(msg.senderEmail || "")}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
+                              >
+                                <Calendar className="h-3.5 w-3.5" />
+                                <span>Google Cal</span>
+                                <ExternalLink className="h-2.5 w-2.5" />
+                              </a>
 
-        {/* Multiple Images / Attachments Gallery Section */}
-        {attachments.length > 0 && (
-          <div className="pt-4 border-t border-border/40 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                <Paperclip className="h-4 w-4 text-sky-400" />
-                <span>Attachments &amp; Files ({attachments.length})</span>
-              </div>
-              <span className="text-[10px] text-muted-foreground">
-                Bypassed during sync &bull; Downloaded on-demand from origin mail provider
-              </span>
-            </div>
+                              <a
+                                href={`https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(
+                                  prop.title
+                                )}&body=${encodeURIComponent(prop.description || "")}&startdt=${encodeURIComponent(
+                                  new Date(prop.startTime).toISOString()
+                                )}&enddt=${encodeURIComponent(new Date(prop.endTime).toISOString())}&to=${encodeURIComponent(
+                                  msg.senderEmail || ""
+                                )}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
+                              >
+                                <Calendar className="h-3.5 w-3.5" />
+                                <span>Outlook</span>
+                                <ExternalLink className="h-2.5 w-2.5" />
+                              </a>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {attachments.map((att) => {
-                const isImage = att.contentType.startsWith("image/") && att.filePath && att.filePath.startsWith("data:");
-                const isPdf = att.contentType.includes("pdf") || att.filename.toLowerCase().endsWith(".pdf");
-                const isZip = att.contentType.includes("zip") || att.contentType.includes("tar") || att.contentType.includes("compressed") || att.filename.toLowerCase().endsWith(".zip") || att.filename.toLowerCase().endsWith(".rar");
-                const isDownloading = downloadingAttId === att.id;
-
-                return (
-                  <div
-                    key={att.id}
-                    className="group relative rounded-xl border border-border/60 bg-secondary/30 p-2.5 flex flex-col justify-between hover:bg-secondary/60 hover:border-border transition-all"
-                  >
-                    {isImage ? (
-                      <div
-                        onClick={() => setPreviewImage(att.filePath)}
-                        className="relative h-24 w-full rounded-lg bg-card overflow-hidden flex items-center justify-center cursor-pointer mb-2"
-                      >
-                        <img
-                          src={att.filePath}
-                          alt={att.filename}
-                          className="h-full w-full object-cover group-hover:scale-105 transition-transform"
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white">
-                          <Maximize2 className="h-4 w-4" />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDownloadIcs(prop)}
+                                className="text-xs h-8 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                <span>.ics File</span>
+                              </Button>
+                            </div>
+                          </div>
                         </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 1-Click Newsletter Unsubscribe Banner */}
+                  {isNewsletterMsg && !unsubscribed && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between text-xs text-amber-200">
+                      <div className="flex items-center gap-2">
+                        <MailX className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Newsletter / marketing email detected.</span>
                       </div>
-                    ) : (
-                      <div className="h-24 w-full rounded-lg bg-card/60 flex flex-col items-center justify-center gap-1 text-muted-foreground mb-2 p-2">
-                        {isPdf ? (
-                          <FileText className="h-8 w-8 text-rose-400" />
-                        ) : isZip ? (
-                          <Archive className="h-8 w-8 text-amber-400" />
-                        ) : (
-                          <Paperclip className="h-8 w-8 text-sky-400" />
-                        )}
-                        <span className="text-[9px] uppercase font-mono tracking-wider font-semibold text-muted-foreground truncate max-w-full">
-                          {att.filename.split(".").pop() || "FILE"}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={unsubscribing}
+                        onClick={handleUnsubscribe}
+                        className="h-7 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-500/20 hover:text-amber-200 cursor-pointer"
+                      >
+                        {unsubscribing ? "Unsubscribing..." : "Unsubscribe in 1-Click"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Email Message Content (Isolated Sandboxed Iframe Viewer) */}
+                  <div className="space-y-4">
+                    <SandboxedEmailBody
+                      html={msg.bodyHtml || ""}
+                      fallbackText={msg.bodyText || msg.snippet || "No text body available."}
+                    />
+                  </div>
+
+                  {/* Multiple Images / Attachments Gallery Section */}
+                  {msgAttachments.length > 0 && (
+                    <div className="pt-4 border-t border-border/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <Paperclip className="h-4 w-4 text-sky-400" />
+                          <span>Attachments &amp; Files ({msgAttachments.length})</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">
+                          Bypassed during sync &bull; Downloaded on-demand from origin mail provider
                         </span>
                       </div>
-                    )}
 
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate" title={att.filename}>
-                        {att.filename}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {att.sizeBytes > 1048576
-                          ? `${(att.sizeBytes / 1048576).toFixed(2)} MB`
-                          : `${(att.sizeBytes / 1024).toFixed(1)} KB`}
-                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {msgAttachments.map((att) => {
+                          const isImage = att.contentType.startsWith("image/") && att.filePath && att.filePath.startsWith("data:");
+                          const isPdf = att.contentType.includes("pdf") || att.filename.toLowerCase().endsWith(".pdf");
+                          const isZip = att.contentType.includes("zip") || att.contentType.includes("tar") || att.contentType.includes("compressed") || att.filename.toLowerCase().endsWith(".zip") || att.filename.toLowerCase().endsWith(".rar");
+                          const isDownloading = downloadingAttId === att.id;
+
+                          return (
+                            <div
+                              key={att.id}
+                              className="group relative rounded-xl border border-border/60 bg-secondary/30 p-2.5 flex flex-col justify-between hover:bg-secondary/60 hover:border-border transition-all"
+                            >
+                              {isImage ? (
+                                <div
+                                  onClick={() => setPreviewImage(att.filePath)}
+                                  className="relative h-24 w-full rounded-lg bg-card overflow-hidden flex items-center justify-center cursor-pointer mb-2"
+                                >
+                                  <img
+                                    src={att.filePath}
+                                    alt={att.filename}
+                                    className="h-full w-full object-cover group-hover:scale-105 transition-transform"
+                                  />
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white">
+                                    <Maximize2 className="h-4 w-4" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="h-24 w-full rounded-lg bg-card/60 flex flex-col items-center justify-center gap-1 text-muted-foreground mb-2 p-2">
+                                  {isPdf ? (
+                                    <FileText className="h-8 w-8 text-rose-400" />
+                                  ) : isZip ? (
+                                    <Archive className="h-8 w-8 text-amber-400" />
+                                  ) : (
+                                    <Paperclip className="h-8 w-8 text-sky-400" />
+                                  )}
+                                  <span className="text-[9px] uppercase font-mono tracking-wider font-semibold text-muted-foreground truncate max-w-full">
+                                    {att.filename.split(".").pop() || "FILE"}
+                                  </span>
+                                </div>
+                              )}
+
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-foreground truncate" title={att.filename}>
+                                  {att.filename}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  {att.sizeBytes > 1048576
+                                    ? `${(att.sizeBytes / 1048576).toFixed(2)} MB`
+                                    : `${(att.sizeBytes / 1024).toFixed(1)} KB`}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadAttachment(att)}
+                                disabled={isDownloading}
+                                className="mt-2 text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-medium transition-colors cursor-pointer disabled:opacity-60"
+                              >
+                                {isDownloading ? (
+                                  <>
+                                    <RefreshCw className="h-3 w-3 animate-spin text-sky-400" />
+                                    <span>Fetching...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="h-3 w-3" />
+                                    <span>Download</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadAttachment(att)}
-                      disabled={isDownloading}
-                      className="mt-2 text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-medium transition-colors cursor-pointer disabled:opacity-60"
-                    >
-                      {isDownloading ? (
-                        <>
-                          <RefreshCw className="h-3 w-3 animate-spin text-sky-400" />
-                          <span>Fetching...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-3 w-3" />
-                          <span>Download</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
         {/* Quick Reply Composer & AI Draft Generator */}
         <div className="pt-6 border-t border-border/50 space-y-3">

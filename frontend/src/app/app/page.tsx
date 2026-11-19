@@ -662,7 +662,8 @@ export default function AppMailPage() {
   const filteredThreads = React.useMemo(() => {
     return threads.filter((thread) => {
       // 1. Account filter
-      if (selectedAccountId !== "all" && thread.accountId !== selectedAccountId) {
+      const threadAccId = thread.accountId || thread.account?.id;
+      if (selectedAccountId !== "all" && threadAccId !== selectedAccountId) {
         return false;
       }
 

@@ -795,9 +795,24 @@ export function MailSidebar({
                               {latestMessage?.senderName || latestMessage?.senderEmail || "Unknown Sender"}
                             </span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
-                            {formatShortDate(thread.lastMessageAt)}
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {selectedAccountId === "all" && thread.account && (
+                              <span
+                                className="text-[9px] px-1.5 py-0.2 rounded-full border font-medium truncate max-w-[80px]"
+                                style={{
+                                  borderColor: `${thread.account.colorCode || '#38bdf8'}40`,
+                                  backgroundColor: `${thread.account.colorCode || '#38bdf8'}15`,
+                                  color: thread.account.colorCode || '#38bdf8',
+                                }}
+                                title={`Received on ${thread.account.emailAddress}`}
+                              >
+                                {thread.account.displayName || thread.account.emailAddress.split("@")[0]}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                              {formatShortDate(thread.lastMessageAt)}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Subject + Badges */}
@@ -809,6 +824,13 @@ export function MailSidebar({
                           >
                             {thread.subject || "(No Subject)"}
                           </span>
+
+                          {/* Multi-message count pill */}
+                          {thread.messages.length > 1 && (
+                            <span className="text-[9px] font-semibold text-muted-foreground/80 bg-secondary px-1 py-0 rounded border border-border/40">
+                              {thread.messages.length}
+                            </span>
+                          )}
 
                           {/* Priority Badge */}
                           {thread.priorityLevel === "URGENT" && (
