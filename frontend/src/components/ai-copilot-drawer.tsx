@@ -198,18 +198,32 @@ export function AICopilotDrawer({
     }
   }, [open]);
 
-  // Load chat history for the active thread
+  // Load chat history from local VPS database (thread-specific or global multi-inbox)
   React.useEffect(() => {
-    if (open && activeThread) {
-      apiFetch(`/api/agent/history/${activeThread.id}`)
+    if (open) {
+      const endpoint = activeThread ? `/api/agent/history/${activeThread.id}` : `/api/agent/history/global`;
+      apiFetch(endpoint)
         .then((res) => {
           if (res && res.messages && res.messages.length > 0) {
             setMessages(res.messages);
+          } else {
+            setMessages([]);
           }
         })
         .catch(() => {});
     }
   }, [open, activeThread?.id]);
+
+  const handleClearHistory = async () => {
+    if (!confirm("Clear this local Copilot chat history from your database?")) return;
+    try {
+      const endpoint = activeThread ? `/api/agent/history/${activeThread.id}` : `/api/agent/history/global`;
+      await apiFetch(endpoint, { method: "DELETE" });
+      setMessages([]);
+    } catch (err: any) {
+      alert("Failed to clear local chat history: " + (err.message || "Unknown error"));
+    }
+  };
 
   const [sendingCardId, setSendingCardId] = React.useState<string | null>(null);
   const isSendingDraftRef = React.useRef<boolean>(false);
@@ -468,6 +482,17 @@ export function AICopilotDrawer({
         </div>
 
         <div className="flex items-center gap-1">
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleClearHistory}
+              title="Clear local chat history"
+              className="h-8 w-8 text-muted-foreground hover:text-red-400 cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {onOpenSettings && (
             <Button
               variant="ghost"

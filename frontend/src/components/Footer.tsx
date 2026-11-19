@@ -15,7 +15,7 @@ export default function Footer() {
               <span className="font-bold text-lg text-white">Mailr</span>
             </Link>
             <p className="text-xs text-slate-400 leading-relaxed">
-              The AI-powered multi-account email client. Provider agnostic, privacy-first, with zero-knowledge token encryption.
+              The AI-powered, self-hostable multi-account email client. 100% data sovereignty, local VPS storage, provider agnostic, with zero-knowledge token encryption.
             </p>
             <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium">
               <Shield className="w-3.5 h-3.5" />
@@ -46,7 +46,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link href="/pricing" className="hover:text-white transition-colors">
-                  Pricing Plans
+                  Self-Hosting Guide
                 </Link>
               </li>
               <li>

@@ -34,17 +34,22 @@ router.post('/chat', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 2. Get Copilot chat message history
+// 2. Get Copilot chat message history stored locally in VPS database
 router.get('/history/:threadId?', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { threadId } = req.params;
+    const where: any = { userId: req.user!.id };
+
+    if (threadId && threadId !== 'global') {
+      where.threadId = threadId;
+    } else {
+      where.threadId = null;
+    }
+
     const messages = await prisma.agentChatMessage.findMany({
-      where: {
-        userId: req.user!.id,
-        threadId: threadId ? threadId : undefined,
-      },
+      where,
       orderBy: { createdAt: 'asc' },
-      take: 50,
+      take: 100,
     });
 
     const formatted = messages.map((m) => {
@@ -68,6 +73,26 @@ router.get('/history/:threadId?', async (req: AuthenticatedRequest, res: Respons
     res.json({ messages: formatted });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'History error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Clear locally stored Copilot chat history on VPS
+router.delete('/history/:threadId?', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { threadId } = req.params;
+    const where: any = { userId: req.user!.id };
+
+    if (threadId && threadId !== 'global') {
+      where.threadId = threadId;
+    } else {
+      where.threadId = null;
+    }
+
+    await prisma.agentChatMessage.deleteMany({ where });
+    res.json({ success: true, message: 'Chat history cleared successfully.' });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Clear history error';
     res.status(500).json({ error: msg });
   }
 });

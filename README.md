@@ -1,6 +1,6 @@
-# Mailr — AI-Powered Multi-Account Email Client
+# Mailr — 100% Self-Hostable, Sovereign Multi-Account Email Client
 
-An AI-powered, multi-account email client built for high productivity, privacy, and speed. Natural language instructions triage recent messages, surface only priority emails, propose calendar bookings with `.ics` export, and protect all credentials with zero-knowledge AES-256-GCM encryption.
+An AI-powered, multi-account email client built for high productivity, complete data sovereignty, and speed. Designed as a self-hosted tool deployed on your own VPS or local server: all emails, conversation threads, attachments, and Copilot AI chats are stored locally in your own MySQL database and Redis cache. Zero SaaS subscriptions, zero third-party telemetry, and zero ads.
 
 ---
 
@@ -9,15 +9,16 @@ An AI-powered, multi-account email client built for high productivity, privacy, 
 ```text
 mailr/
 ├── frontend/             # Next.js 14 App Router, Tailwind CSS, shadcn sidebar-09
-│   ├── src/app/          # Landing, marketing pages, auth, and main client app
-│   ├── src/components/   # Modular UI primitives, sidebar, reading pane, modals
+│   ├── src/app/          # Self-hosting guides, settings, and main client app
+│   ├── src/components/   # Modular UI primitives, reading pane, AI Copilot drawer
 │   └── Dockerfile
 ├── backend/              # Node.js + Express (TypeScript), Prisma ORM
 │   ├── src/adapters/     # Gmail, Outlook, and Generic IMAP/SMTP adapters
-│   ├── src/services/     # AI triage, priority scoring, calendar detection, SSE sync
+│   ├── src/services/     # AgentService (13 tools), RedisService, AIService, SyncService
 │   ├── src/utils/        # AES-256-GCM cryptographic encryption utilities
 │   ├── prisma/           # Database schema & migrations for MySQL
 │   └── Dockerfile
+├── redis/                # In-memory Redis cache with auto-fallback for AI models & triage
 ├── nginx/                # Production reverse proxy configuration
 │   └── nginx.conf
 ├── docker-compose.yml    # 1-Command production VPS container orchestration
@@ -29,19 +30,27 @@ mailr/
 
 ## ✨ Features
 
+- **100% Self-Hosted & Local Storage**:
+  - Run on your own VPS, home lab, or local machine with Docker Compose.
+  - All email headers, snippets, full HTML & plaintext message bodies, calendar proposals, and Copilot chats are stored locally in your MySQL database and Redis cache.
+  - Complete data sovereignty with zero third-party cloud intermediaries.
+
 - **Multi-Account & Provider Agnostic**:
   - Connect unlimited Google Mail, Microsoft Outlook, iCloud, Yahoo, Zoho, Fastmail, Proton, or custom IMAP/SMTP inboxes.
   - Live connection handshake tester validates IMAP/SMTP ports & TLS before saving.
   - Unified inbox view or isolate individual accounts via color-coded badges.
 
-- **shadcn `sidebar-09` Interface**:
-  - Primary 56px icon rail: Quick Compose (`+`), direct account switching avatars, core folders (`Inbox`, `Priority AI`, `Starred`, `Sent`, `Drafts`, `Trash`), and user profile menu.
-  - Secondary 320px drawer: Account selector, Unreads toggle, real-time search, and AI natural language triage omnibar.
-  - Reading pane: Clean email typography, zero-knowledge encryption badge, meeting detection widget, and smart reply composer.
+- **Autonomous AI Copilot (13 Tools)**:
+  - 13 autonomous agent tools: Search & Read Emails, Get Thread Messages, Compose Draft, Schedule Calendar Events, Check Schedule Conflicts, Triage Emails, Thread Summaries, Detect Spam/Promos, Batch Clean Inbox, Morning Briefings, Follow-up Reminders, and Contacts Search.
+  - Bring-Your-Own-Key (BYOK) with live provider model catalogs: NVIDIA NIM, OpenAI, Anthropic Claude, Google Gemini, or local models via Ollama/vLLM.
+  - Persistent Copilot chat history stored locally in your database.
 
-- **AI Natural Language Triage**:
-  - Run natural language queries like *"Surface urgent client action items and deadlines"* to triage your messages in real time.
-  - Automatic priority scoring (0–100) with explainable AI reasoning tags.
+- **High-Performance Redis Caching**:
+  - Redis distributed cache for AI models catalog, user AI config, thread notes, and spam scans.
+  - Automatic in-memory fallback if Redis is offline.
+
+- **Zero-Knowledge AES-256-GCM Encryption**:
+  - OAuth tokens, refresh tokens, and IMAP/SMTP secrets are encrypted at rest using an authenticated 256-bit AES-GCM cipher with unique 96-bit IVs.
 
 - **Calendar Proposal Detection & `.ics` Export**:
   - Automatically identifies proposed meetings, schedules, and participants from email threads.

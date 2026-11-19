@@ -30,22 +30,22 @@ export default function HomePage() {
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
             {/* Pill Announcement */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium mb-8">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Next-Gen Provider-Agnostic Email Client with AI</span>
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium mb-8">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>100% Self-Hostable &amp; Sovereign Multi-Inbox Client with AI</span>
             </div>
 
             {/* Headline */}
             <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-[1.1]">
               One client for every inbox you own.{' '}
               <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-indigo-200 bg-clip-text text-transparent">
-                Supercharged by AI.
+                Hosted on your own VPS.
               </span>
             </h1>
 
             {/* Subheading */}
             <p className="mt-6 text-lg sm:text-xl text-slate-300 max-w-2xl mx-auto leading-relaxed">
-              Connect Google Workspace, Microsoft 365, Apple iCloud, and custom domain IMAP/SMTP into a unified, zero-distraction view. Triage with plain English commands, surface only priority emails, and auto-book calendar invites.
+              Connect Google Workspace, Microsoft 365, Apple iCloud, and custom domain IMAP/SMTP into a unified view. All emails, full message bodies, and AI Copilot chats are stored locally in your own database—zero subscriptions, zero tracking ads, and complete data sovereignty.
             </p>
 
             {/* CTAs */}
@@ -322,13 +322,13 @@ export default function HomePage() {
                   <div className="flex items-start gap-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
                     <p className="text-sm text-slate-300">
-                      <strong className="text-white">Full Token Revocation:</strong> Disconnecting an account completely purges tokens and cached metadata.
+                      <strong className="text-white">100% Local Storage:</strong> All emails, full message bodies, and Copilot AI chat histories are stored locally on your own server (MySQL + Redis). No third-party cloud reading your mail.
                     </p>
                   </div>
                   <div className="flex items-start gap-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
                     <p className="text-sm text-slate-300">
-                      <strong className="text-white">Docker VPS Self-Hosting:</strong> Deploy your own single-tenant instance on any Ubuntu/Debian server with Docker Compose.
+                      <strong className="text-white">Self-Hosted Data Sovereignty:</strong> Deploy on your own Ubuntu/Debian VPS or local machine with Docker Compose. Zero subscriptions, zero tracking ads, 100% free.
                     </p>
                   </div>
                 </div>

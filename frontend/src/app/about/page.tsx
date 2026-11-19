@@ -42,7 +42,7 @@ export default function AboutPage() {
               </div>
               <h3 className="text-xl font-bold text-white">Zero-Knowledge Token Security</h3>
               <p className="text-sm text-slate-300 leading-relaxed">
-                Privacy is not an afterthought. Sensitive OAuth refresh tokens and IMAP/SMTP passwords are encrypted with AES-256-GCM before entering our MySQL database. You can disconnect any mailbox at any time to purge cached data.
+                You own the infrastructure. Sensitive OAuth refresh tokens and IMAP/SMTP passwords are encrypted with AES-256-GCM before entering your local database. All messages, threads, and Copilot chats are stored on your own host, giving you complete data sovereignty with zero SaaS tracking.
               </p>
             </div>
           </div>
@@ -87,9 +87,9 @@ export default function AboutPage() {
               <div className="flex gap-4">
                 <CheckCircle2 className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="font-bold text-white">4. Self-Hostable & VPS Ready</h4>
+                  <h4 className="font-bold text-white">4. 100% Self-Hostable &amp; VPS Ready</h4>
                   <p className="text-slate-400 mt-1">
-                    With Docker Compose, XAMPP local support, and Nginx reverse proxy configurations, teams and individuals can run Mailr on their own dedicated servers.
+                    Mailr is designed from the ground up as a self-hostable tool, not a closed-source SaaS. You host it on your own VPS or home server using Docker Compose, retaining complete ownership of your email archives and AI interactions.
                   </p>
                 </div>
               </div>

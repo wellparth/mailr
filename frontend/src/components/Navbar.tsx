@@ -24,7 +24,7 @@ export default function Navbar() {
             Features
           </Link>
           <Link href="/pricing" className="hover:text-white transition-colors">
-            Pricing
+            Self-Hosting
           </Link>
           <Link href="/about" className="hover:text-white transition-colors">
             About
