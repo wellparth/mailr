@@ -4,7 +4,8 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
 }
 
 enum ProviderType {
@@ -126,6 +127,7 @@ model Thread {
 
   @@index([accountId, lastMessageAt])
   @@index([priorityLevel])
+  @@fulltext([subject, snippet])
   @@map("threads")
 }
 
@@ -160,6 +162,7 @@ model Message {
 
   @@index([accountId, receivedAt])
   @@index([isRead])
+  @@fulltext([subject, bodyText])
   @@map("messages")
 }
 

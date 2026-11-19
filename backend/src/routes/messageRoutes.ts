@@ -183,59 +183,108 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
 
     if (search && typeof search === 'string' && search.trim().length > 0) {
       const searchTerm = search.trim();
-      whereCondition.OR = [
-        { subject: { contains: searchTerm } },
-        { snippet: { contains: searchTerm } },
-        { messages: { some: { senderEmail: { contains: searchTerm } } } },
-        { messages: { some: { senderName: { contains: searchTerm } } } },
-      ];
+      // Prepare fulltext search tokens (with wildcard suffix for prefix matching)
+      const sanitizedFt = searchTerm
+        .replace(/[+\-><()~*\"@]+/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((term) => `+${term}*`)
+        .join(' ');
+
+      if (searchTerm.length >= 3 && sanitizedFt) {
+        whereCondition.OR = [
+          { subject: { search: sanitizedFt } },
+          { snippet: { search: sanitizedFt } },
+          { messages: { some: { bodyText: { search: sanitizedFt } } } },
+          { messages: { some: { senderEmail: { contains: searchTerm } } } },
+          { messages: { some: { senderName: { contains: searchTerm } } } },
+        ];
+      } else {
+        whereCondition.OR = [
+          { subject: { contains: searchTerm } },
+          { snippet: { contains: searchTerm } },
+          { messages: { some: { senderEmail: { contains: searchTerm } } } },
+          { messages: { some: { senderName: { contains: searchTerm } } } },
+        ];
+      }
     }
 
-    const [totalThreads, threads] = await Promise.all([
-      prisma.thread.count({ where: whereCondition }),
-      prisma.thread.findMany({
-        where: whereCondition,
-        include: {
-          account: {
+    let totalThreads = 0;
+    let threads: any[] = [];
+
+    const threadQueryInclude = {
+      account: {
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          colorCode: true,
+          provider: true,
+        },
+      },
+      messages: {
+        orderBy: { receivedAt: 'desc' as const },
+        take: 1,
+        select: {
+          id: true,
+          senderName: true,
+          senderEmail: true,
+          isRead: true,
+          isFlagged: true,
+          hasAttachments: true,
+          receivedAt: true,
+          calendarProposals: {
             select: {
               id: true,
-              emailAddress: true,
-              displayName: true,
-              colorCode: true,
-              provider: true,
+              title: true,
+              startTime: true,
+              endTime: true,
+              status: true,
             },
-          },
-          messages: {
-            orderBy: { receivedAt: 'desc' },
-            take: 1,
-            select: {
-              id: true,
-              senderName: true,
-              senderEmail: true,
-              isRead: true,
-              isFlagged: true,
-              hasAttachments: true,
-              receivedAt: true,
-              calendarProposals: {
-                select: {
-                  id: true,
-                  title: true,
-                  startTime: true,
-                  endTime: true,
-                  status: true,
-                },
-              },
-            },
-          },
-          _count: {
-            select: { messages: true },
           },
         },
-        orderBy: { lastMessageAt: 'desc' },
-        skip,
-        take: limitNum,
-      }),
-    ]);
+      },
+      _count: {
+        select: { messages: true },
+      },
+    };
+
+    try {
+      [totalThreads, threads] = await Promise.all([
+        prisma.thread.count({ where: whereCondition }),
+        prisma.thread.findMany({
+          where: whereCondition,
+          include: threadQueryInclude,
+          orderBy: { lastMessageAt: 'desc' },
+          skip,
+          take: limitNum,
+        }),
+      ]);
+    } catch (queryErr) {
+      // Fallback: if fulltext search query failed, fall back gracefully to standard substring matching
+      if (search && typeof search === 'string') {
+        const searchTerm = search.trim();
+        whereCondition.OR = [
+          { subject: { contains: searchTerm } },
+          { snippet: { contains: searchTerm } },
+          { messages: { some: { senderEmail: { contains: searchTerm } } } },
+          { messages: { some: { senderName: { contains: searchTerm } } } },
+        ];
+        [totalThreads, threads] = await Promise.all([
+          prisma.thread.count({ where: whereCondition }),
+          prisma.thread.findMany({
+            where: whereCondition,
+            include: threadQueryInclude,
+            orderBy: { lastMessageAt: 'desc' },
+            skip,
+            take: limitNum,
+          }),
+        ]);
+      } else {
+        throw queryErr;
+      }
+    }
 
     // Unread count aggregate
     const unreadCount = await prisma.message.count({
