@@ -55,22 +55,24 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
     *, *::before, *::after {
       box-sizing: border-box;
     }
-    html {
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: auto !important;
+      min-height: 0 !important;
       background-color: ${bgCol};
       color: ${textCol};
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-size: 14px;
       line-height: 1.6;
-      margin: 0;
-      padding: 0;
-    }
-    body {
-      margin: 0;
-      padding: 16px;
-      background-color: ${bgCol};
-      color: ${textCol};
       word-break: break-word;
       overflow-wrap: break-word;
+    }
+    #mailr-content-wrapper {
+      padding: 16px;
+      overflow: hidden;
+      height: auto;
+      min-height: 0;
     }
     a {
       color: ${linkCol};
@@ -91,22 +93,35 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
   </style>
 </head>
 <body>
-  ${sanitizedHtml}
+  <div id="mailr-content-wrapper">
+    ${sanitizedHtml}
+  </div>
   <script>
-    // Post actual content height to parent for seamless auto-resizing
-    function reportHeight() {
-      var h = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight,
-        document.body.offsetHeight
-      );
-      window.parent.postMessage({ type: 'MAILR_IFRAME_HEIGHT', height: h }, '*');
-    }
-    window.addEventListener('load', reportHeight);
-    window.addEventListener('resize', reportHeight);
-    setTimeout(reportHeight, 100);
-    setTimeout(reportHeight, 600);
-    setTimeout(reportHeight, 2000);
+    (function() {
+      var wrapper = document.getElementById('mailr-content-wrapper');
+      var lastSentHeight = 0;
+
+      function reportHeight() {
+        if (!wrapper) return;
+        var h = Math.ceil(wrapper.getBoundingClientRect().height);
+        if (h > 0 && Math.abs(h - lastSentHeight) > 3) {
+          lastSentHeight = h;
+          window.parent.postMessage({ type: 'MAILR_IFRAME_HEIGHT', height: h }, '*');
+        }
+      }
+
+      if (window.ResizeObserver && wrapper) {
+        var ro = new ResizeObserver(function() {
+          reportHeight();
+        });
+        ro.observe(wrapper);
+      }
+
+      window.addEventListener('load', reportHeight);
+      setTimeout(reportHeight, 50);
+      setTimeout(reportHeight, 300);
+      setTimeout(reportHeight, 1000);
+    })();
   </script>
 </body>
 </html>`;
@@ -119,9 +134,13 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
         if (e.source && iframeRef.current && e.source !== iframeRef.current.contentWindow) {
           return;
         }
-        if (e.data.height > 50) {
-          setIframeHeight(Math.min(e.data.height + 24, 12000));
-        }
+        const targetHeight = Math.max(50, Math.min(Math.ceil(e.data.height), 12000));
+        setIframeHeight((prev) => {
+          if (Math.abs(prev - targetHeight) > 3) {
+            return targetHeight;
+          }
+          return prev;
+        });
       }
     };
 
@@ -134,12 +153,12 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
     try {
       if (iframeRef.current && iframeRef.current.contentDocument) {
         const doc = iframeRef.current.contentDocument;
-        const h = Math.max(
-          doc.body ? doc.body.scrollHeight : 0,
-          doc.documentElement ? doc.documentElement.scrollHeight : 0
-        );
+        const wrapper = doc.getElementById("mailr-content-wrapper");
+        const h = wrapper
+          ? Math.ceil(wrapper.getBoundingClientRect().height)
+          : Math.ceil(doc.body ? doc.body.scrollHeight : 0);
         if (h > 50) {
-          setIframeHeight(h + 24);
+          setIframeHeight((prev) => (Math.abs(prev - h) > 3 ? h : prev));
         }
       }
     } catch {}
@@ -208,7 +227,6 @@ export function SandboxedEmailBody({ html, fallbackText, className }: SandboxedE
           height: `${iframeHeight}px`,
           border: "none",
           display: "block",
-          transition: "height 0.2s ease-in-out",
         }}
         className="w-full bg-transparent overflow-hidden"
       />
