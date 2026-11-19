@@ -78,6 +78,7 @@ export interface ThreadItem {
   priorityReason?: string;
   isStarred: boolean;
   isArchived: boolean;
+  snoozedUntil?: string | null;
   lastMessageAt: string;
   account: {
     id: string;

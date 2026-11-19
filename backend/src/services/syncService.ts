@@ -168,12 +168,16 @@ export class SyncService {
             continue;
           }
 
-          // 1. Run AI Priority Scoring
-          const priority = AIService.calculatePriority(
-            msg.subject,
-            msg.bodyText || msg.bodyHtml || '',
-            account.emailAddress
-          );
+          const isSentFolder = msg.folder === 'SENT' || msg.senderEmail.toLowerCase() === account.emailAddress.toLowerCase();
+
+          // 1. Run AI Priority Scoring (NORMAL for self-sent outbound emails)
+          const priority = isSentFolder
+            ? { score: 30, level: 'NORMAL' as const, reason: 'Outbound sent message' }
+            : AIService.calculatePriority(
+                msg.subject,
+                msg.bodyText || msg.bodyHtml || '',
+                account.emailAddress
+              );
 
           // 2. Run AI Calendar Proposal Detection
           const proposal = AIService.extractCalendarProposal(
@@ -244,9 +248,11 @@ export class SyncService {
               snippet: msg.snippet,
               bodyHtml: msg.bodyHtml || `<p>${msg.bodyText || ''}</p>`,
               bodyText: msg.bodyText || '',
-              isRead: msg.isRead,
+              isRead: isSentFolder ? true : msg.isRead,
               isFlagged: msg.isFlagged,
+              isArchived: msg.folder === 'ARCHIVE' || msg.folder === 'TRASH' || msg.isArchived || false,
               hasAttachments: msg.hasAttachments,
+              status: isSentFolder ? 'SENT' : 'RECEIVED',
               receivedAt: msg.receivedAt,
               attachments:
                 msg.attachments && msg.attachments.length > 0

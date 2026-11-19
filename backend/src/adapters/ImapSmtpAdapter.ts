@@ -115,36 +115,67 @@ export class ImapSmtpAdapter implements IEmailAdapter {
   }
 
   /**
-   * Syncs messages from the IMAP INBOX folder.
-   * Downloads raw RFC-2822 sources and parses with mailparser.
+   * Discovers the exact server mailbox path for a standard role (INBOX, SENT, TRASH, ARCHIVE, DRAFTS).
+   * Checks both RFC 6154 specialUse attributes and standard international naming heuristics.
    */
-  async syncMessages(
-    _since: Date,
-    onBatch: (messages: NormalizedMessage[]) => Promise<void>,
-    options?: SyncOptions
+  async discoverMailbox(role: 'INBOX' | 'SENT' | 'TRASH' | 'ARCHIVE' | 'DRAFTS'): Promise<string> {
+    if (role === 'INBOX') return 'INBOX';
+    if (!this.imapClient) return role;
+
+    try {
+      const list = await this.imapClient.list();
+      const targetSpecial = `\\${role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}`;
+      
+      // 1. Check RFC 6154 specialUse
+      const bySpecialUse = list.find((m) => m.specialUse === targetSpecial);
+      if (bySpecialUse && bySpecialUse.path) return bySpecialUse.path;
+
+      // 2. Comprehensive heuristics for common mail providers (Gmail, Outlook, Yahoo, Dovecot, Postfix)
+      const patterns: Record<string, RegExp> = {
+        SENT: /^(sent|sent items|sent messages|\[gmail\]\/sent mail|inbox[\/\.]sent)$/i,
+        TRASH: /^(trash|deleted|deleted items|bin|\[gmail\]\/trash|\[gmail\]\/bin|inbox[\/\.]trash)$/i,
+        ARCHIVE: /^(archive|archives|all mail|\[gmail\]\/all mail|inbox[\/\.]archive)$/i,
+        DRAFTS: /^(drafts|\[gmail\]\/drafts|inbox[\/\.]drafts)$/i,
+      };
+
+      const regex = patterns[role];
+      if (regex) {
+        const byName = list.find((m) => regex.test(m.path) || regex.test(m.name));
+        if (byName && byName.path) return byName.path;
+      }
+    } catch (err) {
+      console.warn(`[ImapSmtpAdapter] Mailbox discovery error for ${role}:`, err);
+    }
+
+    return role;
+  }
+
+  /**
+   * Syncs messages from a specific IMAP mailbox.
+   */
+  private async syncMailbox(
+    folderPath: string,
+    folderType: 'INBOX' | 'SENT' | 'TRASH' | 'ARCHIVE' | 'DRAFTS',
+    maxTarget: number,
+    onBatch: (messages: NormalizedMessage[]) => Promise<void>
   ): Promise<number> {
-    await this.connect();
-    if (!this.imapClient) {
-      throw new Error('IMAP client is not initialized.');
+    if (!this.imapClient) return 0;
+    let lock;
+    try {
+      lock = await this.imapClient.getMailboxLock(folderPath);
+    } catch (lockErr) {
+      console.warn(`[ImapSmtpAdapter] Could not acquire lock for ${folderPath}:`, lockErr);
+      return 0;
     }
 
     try {
-      await this.imapClient.connect();
-    } catch (err: unknown) {
-      console.warn('IMAP already connected or connection notice:', err instanceof Error ? err.message : err);
-    }
-
-    const lock = await this.imapClient.getMailboxLock('INBOX');
-    try {
-      const status = await this.imapClient.status('INBOX', { messages: true, unseen: true });
+      const status = await this.imapClient.status(folderPath, { messages: true, unseen: true });
       const totalMessages = status.messages || 0;
 
       if (totalMessages === 0) {
         return 0;
       }
 
-      // Fetch up to maxTarget messages (or all if < maxTarget)
-      const maxTarget = options?.maxMessages || (options?.fullSync ? 1000 : 300);
       const startSeq = Math.max(1, totalMessages - maxTarget + 1);
       const range = `${startSeq}:*`;
 
@@ -164,7 +195,7 @@ export class ImapSmtpAdapter implements IEmailAdapter {
           // Parse with mailparser
           const parsed: ParsedMail = await simpleParser(msg.source);
 
-          const isRead = msg.flags ? msg.flags.has('\\Seen') : false;
+          const isRead = folderType === 'SENT' ? true : (msg.flags ? msg.flags.has('\\Seen') : false);
           const isFlagged = msg.flags ? msg.flags.has('\\Flagged') : false;
 
           const sender = parsed.from?.value[0] || { name: '', address: '' };
@@ -205,11 +236,14 @@ export class ImapSmtpAdapter implements IEmailAdapter {
             .replace(/\s+/g, ' ')
             .trim();
 
+          const senderEmail = sender.address || (folderType === 'SENT' ? this.config.userEmail : 'unknown@domain.com');
+          const senderName = sender.name || (folderType === 'SENT' ? 'Me' : sender.address?.split('@')[0] || 'Unknown');
+
           normalizedBatch.push({
-            remoteId: String(msg.uid || msg.seq),
-            remoteThreadId: parsed.messageId || `thread_${msg.uid || msg.seq}`,
-            senderName: sender.name || sender.address?.split('@')[0] || 'Unknown',
-            senderEmail: sender.address || 'unknown@domain.com',
+            remoteId: folderType === 'INBOX' ? String(msg.uid || msg.seq) : `${folderType.toLowerCase()}_${msg.uid || msg.seq}`,
+            remoteThreadId: parsed.messageId || `thread_${folderType.toLowerCase()}_${msg.uid || msg.seq}`,
+            senderName,
+            senderEmail,
             recipients,
             cc: ccList,
             subject: parsed.subject || '(No Subject)',
@@ -219,8 +253,10 @@ export class ImapSmtpAdapter implements IEmailAdapter {
             receivedAt: parsed.date instanceof Date ? parsed.date : (msg.internalDate ? new Date(msg.internalDate) : new Date()),
             isRead,
             isFlagged,
+            isArchived: folderType === 'ARCHIVE' || folderType === 'TRASH',
             hasAttachments: attachments.length > 0,
             attachments,
+            folder: folderType,
           });
 
           if (normalizedBatch.length >= 25) {
@@ -229,7 +265,7 @@ export class ImapSmtpAdapter implements IEmailAdapter {
             normalizedBatch = [];
           }
         } catch (parseError) {
-          console.error(`Error parsing IMAP message UID ${msg.uid}:`, parseError);
+          console.error(`Error parsing IMAP message UID ${msg.uid} in ${folderPath}:`, parseError);
         }
       }
 
@@ -242,6 +278,54 @@ export class ImapSmtpAdapter implements IEmailAdapter {
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * Syncs messages across multi-folder hierarchy (INBOX and SENT folders).
+   * Downloads raw RFC-2822 sources and parses with mailparser.
+   */
+  async syncMessages(
+    _since: Date,
+    onBatch: (messages: NormalizedMessage[]) => Promise<void>,
+    options?: SyncOptions
+  ): Promise<number> {
+    await this.connect();
+    if (!this.imapClient) {
+      throw new Error('IMAP client is not initialized.');
+    }
+
+    try {
+      await this.imapClient.connect();
+    } catch (err: unknown) {
+      console.warn('IMAP already connected or connection notice:', err instanceof Error ? err.message : err);
+    }
+
+    // 1. If explicit folder requested
+    if (options?.folder) {
+      const targetRole = options.folder.toUpperCase() as 'INBOX' | 'SENT' | 'TRASH' | 'ARCHIVE' | 'DRAFTS';
+      const folderPath = await this.discoverMailbox(targetRole);
+      const maxTarget = options?.maxMessages || (options?.fullSync ? 1000 : 300);
+      return await this.syncMailbox(folderPath, targetRole, maxTarget, onBatch);
+    }
+
+    let totalSynced = 0;
+
+    // 2. Sync INBOX
+    const inboxTarget = options?.maxMessages || (options?.fullSync ? 1000 : 300);
+    totalSynced += await this.syncMailbox('INBOX', 'INBOX', inboxTarget, onBatch);
+
+    // 3. Sync Sent folder so emails sent externally or on mobile devices are retained locally
+    try {
+      const sentPath = await this.discoverMailbox('SENT');
+      if (sentPath) {
+        const sentTarget = options?.fullSync ? 300 : 100;
+        totalSynced += await this.syncMailbox(sentPath, 'SENT', sentTarget, onBatch);
+      }
+    } catch (sentErr) {
+      console.warn('[ImapSmtpAdapter] Optional SENT folder sync skipped:', sentErr);
+    }
+
+    return totalSynced;
   }
 
   async sendMail(options: SendMailOptions): Promise<{ success: boolean; messageId: string }> {
@@ -276,7 +360,8 @@ export class ImapSmtpAdapter implements IEmailAdapter {
     try {
       const lock = await this.imapClient.getMailboxLock('INBOX');
       try {
-        const uid = Number(remoteMessageId);
+        const rawUid = remoteMessageId.replace(/^[a-z]+_/i, '');
+        const uid = Number(rawUid);
         if (!isNaN(uid)) {
           if (isRead) {
             await this.imapClient.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true });
@@ -297,15 +382,21 @@ export class ImapSmtpAdapter implements IEmailAdapter {
     if (!this.imapClient) return;
 
     try {
+      const archiveMailbox = await this.discoverMailbox('ARCHIVE');
       const lock = await this.imapClient.getMailboxLock('INBOX');
       try {
-        const uid = Number(remoteMessageId);
+        const rawUid = remoteMessageId.replace(/^[a-z]+_/i, '');
+        const uid = Number(rawUid);
         if (!isNaN(uid)) {
-          // Attempt to move to Archive mailbox if supported
-          try {
-            await this.imapClient.messageMove({ uid }, 'Archive', { uid: true });
-          } catch {
-            // fallback: mark as seen
+          // Attempt to move to Archive mailbox if supported and distinct from INBOX
+          if (archiveMailbox && archiveMailbox.toUpperCase() !== 'INBOX') {
+            try {
+              await this.imapClient.messageMove({ uid }, archiveMailbox, { uid: true });
+            } catch {
+              // fallback: mark as seen
+              await this.imapClient.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true });
+            }
+          } else {
             await this.imapClient.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true });
           }
         }
@@ -322,11 +413,21 @@ export class ImapSmtpAdapter implements IEmailAdapter {
     if (!this.imapClient) return;
 
     try {
+      const trashMailbox = await this.discoverMailbox('TRASH');
       const lock = await this.imapClient.getMailboxLock('INBOX');
       try {
-        const uid = Number(remoteMessageId);
+        const rawUid = remoteMessageId.replace(/^[a-z]+_/i, '');
+        const uid = Number(rawUid);
         if (!isNaN(uid)) {
-          await this.imapClient.messageFlagsAdd({ uid }, ['\\Deleted'], { uid: true });
+          if (trashMailbox && trashMailbox.toUpperCase() !== 'INBOX') {
+            try {
+              await this.imapClient.messageMove({ uid }, trashMailbox, { uid: true });
+            } catch {
+              await this.imapClient.messageFlagsAdd({ uid }, ['\\Deleted'], { uid: true });
+            }
+          } else {
+            await this.imapClient.messageFlagsAdd({ uid }, ['\\Deleted'], { uid: true });
+          }
         }
       } finally {
         lock.release();
@@ -347,9 +448,12 @@ export class ImapSmtpAdapter implements IEmailAdapter {
       await this.imapClient.connect();
     } catch {}
 
-    const lock = await this.imapClient.getMailboxLock('INBOX');
+    const isSent = remoteMessageId.startsWith('sent_');
+    const folder = isSent ? await this.discoverMailbox('SENT') : 'INBOX';
+    const lock = await this.imapClient.getMailboxLock(folder);
     try {
-      const uid = Number(remoteMessageId);
+      const rawUid = remoteMessageId.replace(/^[a-z]+_/i, '');
+      const uid = Number(rawUid);
       if (isNaN(uid)) return null;
 
       const msg = await this.imapClient.fetchOne(uid, { source: true }, { uid: true });

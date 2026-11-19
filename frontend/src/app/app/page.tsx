@@ -667,11 +667,24 @@ export default function AppMailPage() {
       } else if (navSection === "starred") {
         if (!thread.isStarred) return false;
       } else if (navSection === "snoozed") {
-        // snoozed view
+        if (thread.isArchived) return false;
+        if (!thread.snoozedUntil || new Date(thread.snoozedUntil) <= new Date()) {
+          return false;
+        }
       } else if (navSection === "scheduled") {
-        // scheduled view
+        const hasScheduled = thread.messages.some((m: any) => m.status === "SCHEDULED");
+        if (!hasScheduled) return false;
+      } else if (navSection === "sent") {
+        const userAccountEmails = accounts.map((a) => a.emailAddress.toLowerCase());
+        const isSentThread = thread.messages.some((m: any) =>
+          m.status === "SENT" || (m.senderEmail && userAccountEmails.includes(m.senderEmail.toLowerCase()))
+        );
+        if (!isSentThread) return false;
       } else if (navSection === "trash") {
-        // trash view
+        if (!thread.isArchived) return false;
+      } else if (navSection === "inbox") {
+        if (thread.isArchived) return false;
+        if (thread.snoozedUntil && new Date(thread.snoozedUntil) > new Date()) return false;
       }
 
       // 3. Unread filter

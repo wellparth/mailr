@@ -162,6 +162,23 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
           ],
         },
       ];
+    } else if (folder === 'SENT') {
+      const userAccounts = await prisma.emailAccount.findMany({
+        where: { userId: req.user!.id },
+        select: { emailAddress: true },
+      });
+      const userEmails = userAccounts.map((a) => a.emailAddress);
+
+      whereCondition.messages = {
+        some: {
+          OR: [
+            { status: 'SENT' },
+            { senderEmail: { in: userEmails } },
+          ],
+        },
+      };
+    } else if (folder === 'TRASH') {
+      whereCondition.isArchived = true;
     }
 
     if (search && typeof search === 'string' && search.trim().length > 0) {

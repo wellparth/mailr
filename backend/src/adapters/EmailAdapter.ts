@@ -24,6 +24,7 @@ export interface NormalizedMessage {
   isArchived?: boolean;
   hasAttachments: boolean;
   attachments?: NormalizedAttachment[];
+  folder?: string;
 }
 
 export interface SendMailOptions {
