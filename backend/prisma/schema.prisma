@@ -57,6 +57,8 @@ model User {
   discordWebhookUrl  String?            @db.Text @map("discord_webhook_url")
   alertThreshold     String?            @default("URGENT") @map("alert_threshold")
   alertsEnabled      Boolean            @default(false) @map("alerts_enabled")
+  bundleNewsletters  Boolean            @default(false) @map("bundle_newsletters")
+  newsletterDeliveryTime String?        @default("08:00") @map("newsletter_delivery_time")
   accounts           EmailAccount[]
   triageLogs         AITriageLog[]
   calendarProposals  CalendarProposal[]
@@ -124,6 +126,7 @@ model Thread {
   priorityReason String?       @db.Text @map("priority_reason")
   isStarred      Boolean       @default(false) @map("is_starred")
   isArchived     Boolean       @default(false) @map("is_archived")
+  isNewsletter   Boolean       @default(false) @map("is_newsletter")
   snoozedUntil   DateTime?     @map("snoozed_until")
   lastMessageAt  DateTime      @map("last_message_at")
   messages       Message[]
@@ -135,6 +138,7 @@ model Thread {
 
   @@index([accountId, lastMessageAt])
   @@index([priorityLevel])
+  @@index([isNewsletter])
   @@fulltext([subject, snippet])
   @@map("threads")
 }

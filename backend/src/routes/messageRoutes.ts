@@ -152,7 +152,19 @@ router.get(['/', '/unified'], async (req: AuthenticatedRequest, res: Response) =
       whereCondition.snoozedUntil = { gt: now };
     } else if (folder === 'SCHEDULED') {
       whereCondition.messages = { some: { status: 'SCHEDULED' } };
+    } else if (folder === 'NEWSLETTERS') {
+      whereCondition.OR = [
+        { isNewsletter: true },
+        { messages: { some: { OR: [{ isNewsletter: true }, { unsubscribeUrl: { not: null } }] } } },
+      ];
     } else if (folder === 'INBOX') {
+      const userPref = await prisma.user.findUnique({
+        where: { id: req.user!.id },
+        select: { bundleNewsletters: true },
+      });
+      if (userPref?.bundleNewsletters) {
+        whereCondition.isNewsletter = false;
+      }
       whereCondition.isArchived = false;
       whereCondition.AND = [
         {

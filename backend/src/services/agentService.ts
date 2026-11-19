@@ -1419,6 +1419,13 @@ Return ONLY the drafted response body ready to send.`;
           summary: `Analyzed sent emails: identified ${res.count} thread(s) needing follow-up`,
         };
       }
+      case 'get_newsletter_rollup': {
+        const res = await this.getNewsletterRollup(userId);
+        return {
+          result: res,
+          summary: `Compiled newsletter rollup: ${res.count} newsletter(s) summarized (~${res.readingTimeSavedMinutes} min reading time saved)`,
+        };
+      }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -2067,15 +2074,20 @@ Return ONLY the drafted response body ready to send.`;
       summary = `Good morning! Today you have ${urgentSnippet}, ${meetingSnippet}${taskSnippet}. Review your priorities below to seize the day.`;
     }
 
+    // 4. Fetch newsletter rollup
+    const newsletterRollup = await this.getNewsletterRollup(userId);
+
     return {
       success: true,
       summary,
       urgentCount: urgentPriorities.length,
       meetingsCount: todaysMeetings.length,
       actionCount: actionRequired.length,
+      newsletterCount: newsletterRollup.count,
       urgentPriorities,
       todaysMeetings,
       actionRequired,
+      newsletterRollup,
     };
   }
 
@@ -2173,4 +2185,118 @@ Return ONLY the drafted response body ready to send.`;
     };
   }
 
+  /**
+   * Daily AI Newsletter Rollup & Consolidated Executive Digest:
+   * Aggregates newsletters, Substack articles, and promotional digests received within 72 hours.
+   * Extracts key headlines, bulleted takeaways, estimated reading time, and direct reading links.
+   */
+  static async getNewsletterRollup(userId: string) {
+    const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
+
+    const newsletterThreads = await prisma.thread.findMany({
+      where: {
+        account: { userId },
+        lastMessageAt: { gte: seventyTwoHoursAgo },
+        OR: [
+          { isNewsletter: true },
+          { messages: { some: { OR: [{ isNewsletter: true }, { unsubscribeUrl: { not: null } }] } } },
+        ],
+      },
+      include: {
+        account: { select: { id: true, emailAddress: true } },
+        messages: {
+          orderBy: { receivedAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            senderName: true,
+            senderEmail: true,
+            subject: true,
+            snippet: true,
+            bodyText: true,
+            receivedAt: true,
+            unsubscribeUrl: true,
+            isNewsletter: true,
+          },
+        },
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      take: 25,
+    });
+
+    const articles = newsletterThreads.map((thread) => {
+      const msg = thread.messages[0];
+      const rawText = msg?.bodyText || msg?.snippet || thread.snippet || '';
+
+      // Clean publication name
+      let publication = msg?.senderName || msg?.senderEmail?.split('@')[0] || 'Publication';
+      if (publication.toLowerCase().includes('via') || publication.toLowerCase().includes('team')) {
+        publication = publication.replace(/via\s+.*$/i, '').trim();
+      }
+      if (msg?.senderEmail?.includes('.substack.com')) {
+        const subSub = msg.senderEmail.split('@')[1]?.replace('.substack.com', '');
+        if (subSub) publication = subSub.toUpperCase();
+      }
+
+      // Estimate read time (word count / 200 words per minute)
+      const words = rawText.trim().split(/\s+/).length;
+      const readTimeMinutes = Math.max(1, Math.round(words / 200));
+
+      // Extract 2-3 key takeaways or bullets
+      const lines = rawText
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 25 && !l.toLowerCase().includes('unsubscribe') && !l.toLowerCase().includes('privacy policy'));
+
+      const takeaways: string[] = [];
+      for (const line of lines) {
+        if (takeaways.length >= 3) break;
+        const clean = line.replace(/^[-•*–—\d\.]+\s*/, '').trim();
+        if (clean.length > 30 && !takeaways.some((t) => t.includes(clean.substring(0, 20)))) {
+          takeaways.push(clean.length > 160 ? clean.substring(0, 157) + '...' : clean);
+        }
+      }
+
+      if (takeaways.length === 0) {
+        takeaways.push(thread.snippet?.substring(0, 160) || 'Comprehensive industry updates and curated editorial insights.');
+      }
+
+      return {
+        id: thread.id,
+        threadId: thread.id,
+        messageId: msg?.id,
+        publication,
+        senderEmail: msg?.senderEmail || '',
+        subject: thread.subject,
+        snippet: thread.snippet || '',
+        readTimeMinutes,
+        receivedAt: (msg?.receivedAt || thread.lastMessageAt).toISOString(),
+        unsubscribeUrl: msg?.unsubscribeUrl || null,
+        keyTakeaways: takeaways,
+      };
+    });
+
+    // Compute metrics
+    const totalReadingTimeSaved = articles.reduce((acc, a) => acc + a.readTimeMinutes, 0);
+    const uniquePublications = Array.from(new Set(articles.map((a) => a.publication)));
+
+    // Generate executive summary text
+    let summary = '';
+    if (articles.length === 0) {
+      summary = 'Your newsletter inbox is completely quiet. No bundled marketing or digest emails arrived in the last 72 hours.';
+    } else {
+      const topPubs = uniquePublications.slice(0, 3).join(', ');
+      summary = `Mailr captured ${articles.length} newsletter edition(s) across ${uniquePublications.length} publication(s) (${topPubs}). Reading the full emails would take ~${totalReadingTimeSaved} minutes. Below is your consolidated AI executive summary.`;
+    }
+
+    return {
+      success: true,
+      count: articles.length,
+      readingTimeSavedMinutes: totalReadingTimeSaved,
+      publicationsCount: uniquePublications.length,
+      publications: uniquePublications,
+      summary,
+      articles,
+    };
+  }
 }

@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Inbox,
   Sparkles,
+  Newspaper,
   Clock,
   Calendar,
   SunMedium,
@@ -78,6 +79,7 @@ export interface ThreadItem {
   priorityReason?: string;
   isStarred: boolean;
   isArchived: boolean;
+  isNewsletter?: boolean;
   snoozedUntil?: string | null;
   lastMessageAt: string;
   account: {
@@ -229,9 +231,19 @@ export function MailSidebar({
     ).length;
   }, [threads]);
 
+  const newsletterCount = React.useMemo(() => {
+    return threads.filter(
+      (t) =>
+        (t.isNewsletter || t.messages.some((m: any) => m.isNewsletter || m.unsubscribeUrl)) &&
+        t.messages[0] &&
+        !t.messages[0].isRead
+    ).length;
+  }, [threads]);
+
   const navItems = [
     { title: "Inbox", id: "inbox", icon: Inbox, badge: unreadCount },
     { title: "Priority AI", id: "priority", icon: Sparkles, badge: priorityCount, badgeColor: "text-emerald-400 bg-emerald-950/80 border-emerald-500/40" },
+    { title: "Newsletters", id: "newsletters", icon: Newspaper, badge: newsletterCount, badgeColor: "text-purple-400 bg-purple-950/80 border-purple-500/40" },
     { title: "Snoozed", id: "snoozed", icon: Clock },
     { title: "Scheduled", id: "scheduled", icon: Calendar },
     { title: "Starred", id: "starred", icon: Star },

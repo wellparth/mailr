@@ -144,6 +144,13 @@ export class SyncService {
       // Cache thread IDs to avoid repeated thread queries
       const threadCache = new Map<string, any>();
 
+      // Fetch user settings for newsletter bundling
+      const userSettings = await prisma.user.findUnique({
+        where: { id: account.userId },
+        select: { bundleNewsletters: true },
+      });
+      const shouldBundleNewsletters = Boolean(userSettings?.bundleNewsletters);
+
       const syncOpts: SyncOptions = {
         ...options,
         existingRemoteIds,
@@ -204,6 +211,9 @@ export class SyncService {
             });
           }
 
+          const isNewsletter = Boolean(msg.isNewsletter);
+          const shouldAutoBundle = shouldBundleNewsletters && isNewsletter && !isSentFolder;
+
           if (!thread) {
             thread = await prisma.thread.create({
               data: {
@@ -215,6 +225,8 @@ export class SyncService {
                 priorityLevel: priority.level,
                 priorityReason: priority.reason,
                 lastMessageAt: msg.receivedAt,
+                isNewsletter,
+                isArchived: shouldAutoBundle ? true : false,
               },
             });
             threadCache.set(msg.remoteThreadId, thread);
@@ -230,6 +242,8 @@ export class SyncService {
                 priorityScore: Math.max(thread.priorityScore, priority.score),
                 priorityLevel: priority.score > thread.priorityScore ? priority.level : thread.priorityLevel,
                 priorityReason: priority.reason || thread.priorityReason,
+                isNewsletter: thread.isNewsletter || isNewsletter,
+                isArchived: shouldAutoBundle ? true : thread.isArchived,
               },
             });
             threadCache.set(msg.remoteThreadId, thread);
@@ -252,10 +266,12 @@ export class SyncService {
               bodyText: msg.bodyText || '',
               isRead: isSentFolder ? true : msg.isRead,
               isFlagged: msg.isFlagged,
-              isArchived: msg.folder === 'ARCHIVE' || msg.folder === 'TRASH' || msg.isArchived || false,
+              isArchived: msg.folder === 'ARCHIVE' || msg.folder === 'TRASH' || shouldAutoBundle || msg.isArchived || false,
               hasAttachments: msg.hasAttachments,
               status: isSentFolder ? 'SENT' : 'RECEIVED',
               receivedAt: msg.receivedAt,
+              unsubscribeUrl: msg.unsubscribeUrl,
+              isNewsletter,
               attachments:
                 msg.attachments && msg.attachments.length > 0
                   ? {

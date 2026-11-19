@@ -458,6 +458,63 @@ router.post('/follow-ups/dismiss', async (req: AuthenticatedRequest, res: Respon
   }
 });
 
+// 17c. Daily AI Newsletter Rollup
+router.get('/newsletters/rollup', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rollup = await AgentService.getNewsletterRollup(req.user!.id);
+    res.json(rollup);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Newsletter rollup error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 17d. Get Newsletter Bundling Settings
+router.get('/newsletters/settings', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { bundleNewsletters: true, newsletterDeliveryTime: true },
+    });
+    res.json({
+      bundleNewsletters: Boolean(user?.bundleNewsletters),
+      newsletterDeliveryTime: user?.newsletterDeliveryTime || '08:00',
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Get newsletter settings error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 17e. Update Newsletter Bundling Settings
+router.post('/newsletters/settings', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { bundleNewsletters, newsletterDeliveryTime } = req.body;
+    const updateData: { bundleNewsletters?: boolean; newsletterDeliveryTime?: string } = {};
+    if (typeof bundleNewsletters === 'boolean') {
+      updateData.bundleNewsletters = bundleNewsletters;
+    }
+    if (typeof newsletterDeliveryTime === 'string') {
+      updateData.newsletterDeliveryTime = newsletterDeliveryTime;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: updateData,
+      select: { bundleNewsletters: true, newsletterDeliveryTime: true },
+    });
+
+    res.json({
+      success: true,
+      message: 'Newsletter bundling settings updated.',
+      settings: updated,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Update newsletter settings error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 // 18. Redis Caching & Distributed Bus Status
 router.get('/redis/status', async (_req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, ...redis.getStatus() });

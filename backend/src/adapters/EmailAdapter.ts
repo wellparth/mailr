@@ -25,6 +25,8 @@ export interface NormalizedMessage {
   hasAttachments: boolean;
   attachments?: NormalizedAttachment[];
   folder?: string;
+  unsubscribeUrl?: string;
+  isNewsletter?: boolean;
 }
 
 export interface SendMailOptions {

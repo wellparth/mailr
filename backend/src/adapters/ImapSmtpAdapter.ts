@@ -239,6 +239,36 @@ export class ImapSmtpAdapter implements IEmailAdapter {
           const senderEmail = sender.address || (folderType === 'SENT' ? this.config.userEmail : 'unknown@domain.com');
           const senderName = sender.name || (folderType === 'SENT' ? 'Me' : sender.address?.split('@')[0] || 'Unknown');
 
+          // Extract List-Unsubscribe header & detect newsletter patterns
+          let unsubscribeUrl: string | undefined;
+          const rawUnsub = parsed.headers?.get('list-unsubscribe');
+          if (typeof rawUnsub === 'string') {
+            const match = rawUnsub.match(/<([^>]+)>/);
+            if (match && /^https?:\/\//i.test(match[1])) {
+              unsubscribeUrl = match[1];
+            }
+          }
+          if (!unsubscribeUrl && parsed.html) {
+            const unsubHtmlMatch = parsed.html.match(/href=["'](https?:\/\/[^"']*(?:unsubscribe|optout|opt-out|preferences)[^"']*)["']/i);
+            if (unsubHtmlMatch) {
+              unsubscribeUrl = unsubHtmlMatch[1];
+            }
+          }
+
+          const hasListId = Boolean(parsed.headers?.get('list-id'));
+          const senderLower = senderEmail.toLowerCase();
+          const subjectLower = (parsed.subject || '').toLowerCase();
+          const textLower = (parsed.text || '').toLowerCase();
+
+          const isNewsletter = Boolean(
+            unsubscribeUrl ||
+            hasListId ||
+            rawUnsub ||
+            /newsletter|substack|medium\.com|digest|weekly|monthly|curated|bulletin|mailer|marketing|updates@/i.test(senderLower) ||
+            /\[newsletter\]|weekly digest|monthly digest|issue #\d+|edition #\d+/i.test(subjectLower) ||
+            (textLower.includes('unsubscribe') && (textLower.includes('preferences') || textLower.includes('view in browser')))
+          );
+
           normalizedBatch.push({
             remoteId: folderType === 'INBOX' ? String(msg.uid || msg.seq) : `${folderType.toLowerCase()}_${msg.uid || msg.seq}`,
             remoteThreadId: parsed.messageId || `thread_${folderType.toLowerCase()}_${msg.uid || msg.seq}`,
@@ -257,6 +287,8 @@ export class ImapSmtpAdapter implements IEmailAdapter {
             hasAttachments: attachments.length > 0,
             attachments,
             folder: folderType,
+            unsubscribeUrl,
+            isNewsletter,
           });
 
           if (normalizedBatch.length >= 25) {

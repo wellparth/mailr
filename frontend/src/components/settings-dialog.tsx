@@ -31,6 +31,8 @@ import {
   Bell,
   Send,
   MessageSquare,
+  Newspaper,
+  Inbox,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -53,7 +55,12 @@ export function SettingsDialog({
   onOpenChange,
   accountsCount,
 }: SettingsDialogProps) {
-  const [activeTab, setActiveTab] = React.useState<"ai" | "alerts" | "calendar" | "security">("ai");
+  const [activeTab, setActiveTab] = React.useState<"ai" | "inbox" | "alerts" | "calendar" | "security">("ai");
+
+  // Inbox & Newsletter Bundling State
+  const [bundleNewsletters, setBundleNewsletters] = React.useState(false);
+  const [newsletterDeliveryTime, setNewsletterDeliveryTime] = React.useState("08:00");
+  const [savingNewsletters, setSavingNewsletters] = React.useState(false);
 
   // Urgent Inbound Alerts State
   const [alertsEnabled, setAlertsEnabled] = React.useState(false);
@@ -168,6 +175,16 @@ export function SettingsDialog({
             setHasTelegramToken(Boolean(res.hasTelegramToken));
             setHasDiscordWebhook(Boolean(res.hasDiscordWebhook));
             setDiscordMasked(res.discordWebhookUrlMasked || null);
+          }
+        })
+        .catch(() => {});
+
+      // 5. Load Newsletter Bundling Settings
+      apiFetch("/api/agent/newsletters/settings")
+        .then((res: any) => {
+          if (res) {
+            setBundleNewsletters(Boolean(res.bundleNewsletters));
+            setNewsletterDeliveryTime(res.newsletterDeliveryTime || "08:00");
           }
         })
         .catch(() => {});
@@ -290,6 +307,24 @@ export function SettingsDialog({
     }
   };
 
+  const handleSaveNewsletters = async () => {
+    try {
+      setSavingNewsletters(true);
+      await apiFetch("/api/agent/newsletters/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          bundleNewsletters,
+          newsletterDeliveryTime,
+        }),
+      });
+      showToast("Inbox & newsletter bundling settings saved!");
+    } catch (err: any) {
+      showToast(err.message || "Failed to save newsletter settings");
+    } finally {
+      setSavingNewsletters(false);
+    }
+  };
+
   const handleTestTelegram = async () => {
     try {
       setTestingTelegram(true);
@@ -393,6 +428,21 @@ export function SettingsDialog({
               <span>AI Model & BYOK</span>
               {hasCustomKey && (
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab("inbox")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                activeTab === "inbox"
+                  ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+              }`}
+            >
+              <Newspaper className="h-3.5 w-3.5" />
+              <span>Inbox & Newsletters</span>
+              {bundleNewsletters && (
+                <span className="h-1.5 w-1.5 rounded-full bg-purple-400" />
               )}
             </button>
 
@@ -653,6 +703,99 @@ export function SettingsDialog({
                   className="text-xs h-8 gap-1.5 bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
                 >
                   <span>{savingAI ? "Saving..." : "Save AI Settings"}</span>
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: INBOX & NEWSLETTER BUNDLING */}
+          {activeTab === "inbox" && (
+            <div className="space-y-4">
+              {/* Header Description */}
+              <div className="bg-secondary/30 p-3.5 rounded-xl border border-border/60 flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400 shrink-0 mt-0.5">
+                  <Newspaper className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground">
+                    Autonomous Newsletter Bundling & Executive Rollup
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
+                    Prevent marketing emails, Substack issues, and promotional newsletters from interrupting your focus. Mailr intercepts newsletters, bundles them away from your primary inbox, and synthesizes them into your daily Morning Briefing.
+                  </p>
+                </div>
+              </div>
+
+              {/* Toggle Card */}
+              <div className="p-4 rounded-xl border border-border/60 bg-secondary/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-xs font-semibold text-foreground">
+                      Bundle Newsletters into Executive Digest
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Automatically archive incoming newsletters to keep your primary inbox at Zero.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer bg-card/60 px-2.5 py-1 rounded-lg border border-border/60">
+                    <span className="text-[11px] font-medium text-foreground">
+                      {bundleNewsletters ? "Bundling Active" : "Disabled"}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={bundleNewsletters}
+                      onChange={(e) => setBundleNewsletters(e.target.checked)}
+                      className="h-4 w-4 rounded border-border text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+                    />
+                  </label>
+                </div>
+
+                {/* Delivery Time Picker */}
+                <div className="pt-3 border-t border-border/40 flex items-center justify-between gap-4">
+                  <div>
+                    <Label className="text-xs font-medium text-foreground">
+                      Executive Rollup Target Time
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      When your daily AI executive newsletter summary is compiled
+                    </p>
+                  </div>
+                  <select
+                    value={newsletterDeliveryTime}
+                    onChange={(e) => setNewsletterDeliveryTime(e.target.value)}
+                    className="h-8 rounded-lg bg-background border border-border px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="07:00">07:00 AM (Early Bird)</option>
+                    <option value="08:00">08:00 AM (Morning Routine)</option>
+                    <option value="09:00">09:00 AM (Workday Start)</option>
+                    <option value="12:00">12:00 PM (Lunch Digest)</option>
+                    <option value="18:00">06:00 PM (Evening Rollup)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Information / Acceptance Checklist */}
+              <div className="bg-purple-950/20 border border-purple-500/30 rounded-xl p-3 text-xs space-y-2">
+                <div className="text-[11px] font-semibold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-purple-400" />
+                  What happens when enabled:
+                </div>
+                <ul className="text-[11px] text-purple-200/80 space-y-1 pl-4 list-disc">
+                  <li>Inbound newsletters bypass the primary feed into your dedicated "Newsletters" view.</li>
+                  <li>Every Morning Briefing synthesizes key industry announcements and bullet summaries.</li>
+                  <li>You retain 1-click access to the original full text and unsubscribe links at any time.</li>
+                </ul>
+              </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={handleSaveNewsletters}
+                  disabled={savingNewsletters}
+                  size="sm"
+                  className="bg-purple-600 hover:bg-purple-500 text-white text-xs h-8 px-4 font-medium shadow-sm cursor-pointer"
+                >
+                  {savingNewsletters ? "Saving..." : "Save Inbox Preferences"}
                 </Button>
               </div>
             </div>

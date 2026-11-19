@@ -14,7 +14,7 @@ import { CommandPalette, CommandItem } from "@/components/command-palette";
 import { ShortcutsDialog } from "@/components/shortcuts-dialog";
 import { MorningBriefingDialog } from "@/components/morning-briefing-dialog";
 import { Button } from "@/components/ui/button";
-import { Sparkles, CheckCircle2, PenSquare, RotateCcw, Clock, Calendar, SunMedium, Keyboard, Inbox, Send, FileText, Trash2, Archive, Bot, Star, RefreshCw, Settings, PanelLeft, PanelLeftClose, PanelLeftOpen, Columns } from "lucide-react";
+import { Sparkles, CheckCircle2, PenSquare, RotateCcw, Clock, Calendar, SunMedium, Keyboard, Inbox, Newspaper, Send, FileText, Trash2, Archive, Bot, Star, RefreshCw, Settings, PanelLeft, PanelLeftClose, PanelLeftOpen, Columns } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch, getAuthToken, removeAuthToken, API_BASE_URL } from "@/lib/api";
 
@@ -589,6 +589,13 @@ export default function AppMailPage() {
       action: () => setNavSection("priority"),
     },
     {
+      id: "newsletters",
+      category: "Navigation",
+      title: "Go to Newsletters",
+      icon: Newspaper,
+      action: () => setNavSection("newsletters"),
+    },
+    {
       id: "snoozed",
       category: "Navigation",
       title: "Go to Snoozed",
@@ -682,6 +689,9 @@ export default function AppMailPage() {
         if (!isSentThread) return false;
       } else if (navSection === "trash") {
         if (!thread.isArchived) return false;
+      } else if (navSection === "newsletters") {
+        const isNewsletter = thread.isNewsletter || thread.messages?.some((m: any) => m.isNewsletter || Boolean(m.unsubscribeUrl));
+        if (!isNewsletter) return false;
       } else if (navSection === "inbox") {
         if (thread.isArchived) return false;
         if (thread.snoozedUntil && new Date(thread.snoozedUntil) > new Date()) return false;
@@ -1060,6 +1070,9 @@ export default function AppMailPage() {
         }}
         onOpenComposerWithDraft={(draft, subj, to) => {
           handleInsertDraftToComposer(draft, subj, to);
+        }}
+        onNavigateToNewsletters={() => {
+          setNavSection("newsletters");
         }}
       />
 

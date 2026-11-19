@@ -18,6 +18,8 @@ import {
   Sparkles,
   CheckCircle2,
   ExternalLink,
+  Newspaper,
+  BookOpen,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -26,6 +28,7 @@ interface MorningBriefingDialogProps {
   onOpenChange: (open: boolean) => void;
   onSelectThread: (threadId: string) => void;
   onOpenComposerWithDraft?: (draftText: string, subject: string, to: string) => void;
+  onNavigateToNewsletters?: () => void;
 }
 
 export function MorningBriefingDialog({
@@ -33,11 +36,12 @@ export function MorningBriefingDialog({
   onOpenChange,
   onSelectThread,
   onOpenComposerWithDraft,
+  onNavigateToNewsletters,
 }: MorningBriefingDialogProps) {
   const [briefing, setBriefing] = React.useState<any>(null);
   const [followUps, setFollowUps] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [activeTab, setActiveTab] = React.useState<"briefing" | "followups">("briefing");
+  const [activeTab, setActiveTab] = React.useState<"briefing" | "followups" | "newsletters">("briefing");
 
   React.useEffect(() => {
     if (open) {
@@ -102,6 +106,21 @@ export function MorningBriefingDialog({
                   </span>
                 )}
               </button>
+              <button
+                onClick={() => setActiveTab("newsletters")}
+                className={`px-3 py-1 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                  activeTab === "newsletters"
+                    ? "bg-purple-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Newsletters
+                {briefing?.newsletterRollup?.count > 0 && (
+                  <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-purple-500/40 text-purple-100 font-bold">
+                    {briefing.newsletterRollup.count}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
 
@@ -114,6 +133,8 @@ export function MorningBriefingDialog({
                   <div className="h-2.5 bg-slate-700/60 rounded w-5/6"></div>
                   <div className="h-2.5 bg-slate-700/60 rounded w-4/6"></div>
                 </div>
+              ) : activeTab === "newsletters" ? (
+                briefing?.newsletterRollup?.summary || "Consolidated AI rollup of all inbound newsletters and industry digests."
               ) : (
                 briefing?.summary || "Good morning! Your inbox is organized and ready for the day."
               )}
@@ -246,7 +267,7 @@ export function MorningBriefingDialog({
                 )}
               </div>
             </>
-          ) : (
+          ) : activeTab === "followups" ? (
             /* Smart Follow-Ups Tab */
             <div className="space-y-3">
               <div className="text-xs text-slate-400 mb-2">
@@ -312,6 +333,137 @@ export function MorningBriefingDialog({
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          ) : (
+            /* Daily AI Newsletter Rollup Tab */
+            <div className="space-y-4">
+              {/* Stat Metric Pills */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+                  <div className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider mb-1">
+                    Bundled Newsletters
+                  </div>
+                  <div className="text-2xl font-bold text-purple-200">
+                    {briefing?.newsletterRollup?.count || 0}
+                  </div>
+                </div>
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                  <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-1">
+                    Reading Time Saved
+                  </div>
+                  <div className="text-2xl font-bold text-emerald-200">
+                    ~{briefing?.newsletterRollup?.readingTimeSavedMinutes || 0}m
+                  </div>
+                </div>
+                <div className="p-3 bg-sky-500/10 border border-sky-500/20 rounded-xl">
+                  <div className="text-[11px] font-semibold text-sky-400 uppercase tracking-wider mb-1">
+                    Publications
+                  </div>
+                  <div className="text-2xl font-bold text-sky-200">
+                    {briefing?.newsletterRollup?.publicationsCount || 0}
+                  </div>
+                </div>
+              </div>
+
+              {/* Browse Raw Bundled Action Bar */}
+              <div className="p-3 bg-slate-800/40 border border-slate-700/60 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <BookOpen className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span>Newsletters are automatically bundled away from your primary inbox.</span>
+                </div>
+                {onNavigateToNewsletters && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      onNavigateToNewsletters();
+                      onOpenChange(false);
+                    }}
+                    className="shrink-0 h-7 text-xs border-purple-500/30 text-purple-300 hover:bg-purple-500/20 gap-1.5"
+                  >
+                    Browse Bundled Emails
+                    <ArrowRight className="w-3 h-3" />
+                  </Button>
+                )}
+              </div>
+
+              {/* Newsletter Articles Digest List */}
+              {(!briefing?.newsletterRollup?.articles || briefing.newsletterRollup.articles.length === 0) ? (
+                <div className="p-8 bg-slate-800/30 border border-slate-800 rounded-xl text-center text-xs text-slate-400">
+                  <Newspaper className="w-6 h-6 text-purple-400 mx-auto mb-2 opacity-80" />
+                  No newsletters or marketing digests received in the last 72 hours.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {briefing.newsletterRollup.articles.map((item: any) => (
+                    <div
+                      key={item.id}
+                      className="p-4 bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/60 rounded-xl space-y-3 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                              {item.publication}
+                            </span>
+                            <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              {item.readTimeMinutes} min read
+                            </span>
+                          </div>
+                          <h4 className="text-xs font-semibold text-slate-200">
+                            {item.subject}
+                          </h4>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {item.unsubscribeUrl && (
+                            <a
+                              href={item.unsubscribeUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-slate-700/50 flex items-center gap-1"
+                              title="1-Click Unsubscribe"
+                            >
+                              Unsub
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              onSelectThread(item.threadId);
+                              onOpenChange(false);
+                            }}
+                            className="h-7 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 gap-1 px-2.5"
+                          >
+                            Read Full
+                            <ArrowRight className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Bulleted Key Takeaways */}
+                      {item.keyTakeaways && item.keyTakeaways.length > 0 && (
+                        <div className="p-2.5 bg-slate-900/60 border border-slate-800 rounded-lg space-y-1.5">
+                          <div className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider">
+                            Executive Highlights
+                          </div>
+                          <ul className="space-y-1">
+                            {item.keyTakeaways.map((point: string, idx: number) => (
+                              <li key={idx} className="text-xs text-slate-300 flex items-start gap-2">
+                                <span className="text-purple-400 font-bold leading-none mt-1">•</span>
+                                <span className="leading-snug">{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}
