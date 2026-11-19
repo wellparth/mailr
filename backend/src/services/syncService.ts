@@ -47,6 +47,7 @@ class SyncBroadcaster extends EventEmitter {
 export const syncBroadcaster = new SyncBroadcaster();
 
 export class SyncService {
+  private static syncingAccountIds: Set<string> = new Set();
   /**
    * Syncs an email account by fetching remote messages, running AI triage,
    * saving to MySQL, and notifying connected clients in real time via SSE.
@@ -111,11 +112,17 @@ export class SyncService {
     accountId: string,
     options?: SyncOptions
   ): Promise<{ success: boolean; ingestedCount: number; message: string }> {
+    if (this.syncingAccountIds.has(accountId)) {
+      return { success: true, ingestedCount: 0, message: 'Sync already in progress' };
+    }
+    this.syncingAccountIds.add(accountId);
+
     const account = await prisma.emailAccount.findUnique({
       where: { id: accountId },
     });
 
     if (!account) {
+      this.syncingAccountIds.delete(accountId);
       throw new Error(`Email account ${accountId} not found.`);
     }
 
@@ -421,6 +428,8 @@ export class SyncService {
       });
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to sync account ${account.emailAddress}: ${msg}`);
+    } finally {
+      this.syncingAccountIds.delete(accountId);
     }
   }
 

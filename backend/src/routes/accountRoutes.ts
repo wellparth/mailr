@@ -7,6 +7,7 @@ import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
 import { validateMailDestination } from '../utils/networkSecurity.js';
 import { ProviderType } from '@prisma/client';
 import { syncBroadcaster, SyncService } from '../services/syncService.js';
+import { ImapIdleService } from '../services/imapIdleService.js';
 
 const router = Router();
 
@@ -201,6 +202,11 @@ const handleConnectAccount = async (req: AuthenticatedRequest, res: Response) =>
       console.warn(`[Sync] Background sync notice for ${account.emailAddress}:`, syncErr.message);
     });
 
+    // Start real-time IMAP IDLE push listener
+    ImapIdleService.startListenerForAccount(account).catch((idleErr) => {
+      console.warn(`[IMAP IDLE] Push listener start notice for ${account.emailAddress}:`, idleErr?.message);
+    });
+
     res.status(201).json({
       success: true,
       message: `Account ${email} connected successfully. Sync initiated.`,
@@ -305,6 +311,9 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
+    // Stop real-time push listener
+    await ImapIdleService.stopListenerForAccount(id);
+
     await prisma.emailAccount.delete({
       where: { id },
     });
@@ -387,6 +396,29 @@ router.get('/events', (req: AuthenticatedRequest, res: Response) => {
   });
 
   syncBroadcaster.addClient(req.user!.id, res);
+});
+
+// 7. Get Real-Time IMAP IDLE Push Listener Status
+router.get('/idle/status', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const statuses = ImapIdleService.getStatus();
+    const userAccounts = await prisma.emailAccount.findMany({
+      where: { userId: req.user!.id },
+      select: { id: true },
+    });
+    const userAccountIds = new Set(userAccounts.map((a) => a.id));
+    const userStatuses = statuses.filter((s) => userAccountIds.has(s.accountId));
+
+    res.json({
+      success: true,
+      listeners: userStatuses,
+      count: userStatuses.length,
+      isRealTimePushActive: userStatuses.some((s) => s.status === 'IDLING'),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error fetching IDLE status';
+    res.status(500).json({ error: msg });
+  }
 });
 
 export default router;

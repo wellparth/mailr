@@ -11,6 +11,7 @@ import automationRoutes from './routes/automationRoutes.js';
 
 import { SyncService } from './services/syncService.js';
 import { ScheduledMailService } from './services/scheduledMailService.js';
+import { ImapIdleService } from './services/imapIdleService.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
 import prisma from './db.js';
 
@@ -83,7 +84,12 @@ app.listen(PORT, () => {
   // Start Scheduled Mail Worker
   ScheduledMailService.start(30000);
 
-  // Start periodic background sync worker (polls active accounts; default: 45s, configurable via SYNC_INTERVAL_MS)
+  // Start Real-Time IMAP IDLE Push Listeners (sub-second inbound push ingestion)
+  ImapIdleService.startAll().catch((err) => {
+    console.error('[IMAP IDLE] Initialization error:', err);
+  });
+
+  // Start periodic background sync worker (safety-net polling for non-IDLE accounts; default: 45s)
   const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS || '45000', 10);
   let isSyncing = false;
 
@@ -113,6 +119,17 @@ app.listen(PORT, () => {
       isSyncing = false;
     }
   }, SYNC_INTERVAL_MS);
+});
+
+// Graceful process termination
+process.on('SIGTERM', async () => {
+  await ImapIdleService.stopAll();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  await ImapIdleService.stopAll();
+  process.exit(0);
 });
 
 export default app;
