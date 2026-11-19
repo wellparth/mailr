@@ -332,19 +332,22 @@ export class SyncService {
 
           ingestedCount++;
 
-          // Real-time notification: Push incoming email directly to connected web clients
-          syncBroadcaster.notifyUser(account.userId, 'EMAIL_RECEIVED', {
-            accountId: account.id,
-            threadId: thread.id,
-            messageId: created.id,
-            senderName: msg.senderName,
-            senderEmail: msg.senderEmail,
-            subject: msg.subject,
-            snippet: msg.snippet,
-            priorityLevel: thread.priorityLevel,
-            priorityScore: thread.priorityScore,
-            receivedAt: msg.receivedAt,
-          });
+          // Real-time notification: For live single arrivals (<= 3 messages), emit instant alert.
+          // For bulk batch syncs (> 3 messages), SYNC_PROGRESS / SYNC_COMPLETE are emitted to prevent client event flood.
+          if (batch.length <= 3) {
+            syncBroadcaster.notifyUser(account.userId, 'EMAIL_RECEIVED', {
+              accountId: account.id,
+              threadId: thread.id,
+              messageId: created.id,
+              senderName: msg.senderName,
+              senderEmail: msg.senderEmail,
+              subject: msg.subject,
+              snippet: msg.snippet,
+              priorityLevel: thread.priorityLevel,
+              priorityScore: thread.priorityScore,
+              receivedAt: msg.receivedAt,
+            });
+          }
 
           // Urgent Inbound Push Alerts: Dispatch to Telegram / Discord if configured
           if (!isSentFolder && (thread.priorityLevel === 'URGENT' || thread.priorityLevel === 'HIGH')) {

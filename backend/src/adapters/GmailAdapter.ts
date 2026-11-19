@@ -338,7 +338,7 @@ export class GmailAdapter implements IEmailAdapter {
       }
 
       let totalSynced = 0;
-      const CHUNK_SIZE = 15;
+      const CHUNK_SIZE = 8;
 
       for (let i = 0; i < uningestedItems.length; i += CHUNK_SIZE) {
         const chunk = uningestedItems.slice(i, i + CHUNK_SIZE);
@@ -365,9 +365,9 @@ export class GmailAdapter implements IEmailAdapter {
           console.log(`[GmailAdapter] Ingested chunk: ${totalSynced}/${uningestedItems.length} messages processed`);
         }
 
-        // 250ms smoothing delay to remain well within Google Cloud per-minute user quotas
+        // 350ms smoothing delay to remain well within Google Cloud per-minute user quotas
         if (i + CHUNK_SIZE < uningestedItems.length) {
-          await new Promise((r) => setTimeout(r, 250));
+          await new Promise((r) => setTimeout(r, 350));
         }
       }
 

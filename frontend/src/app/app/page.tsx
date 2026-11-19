@@ -323,6 +323,14 @@ export default function AppMailPage() {
 
     let eventSource: EventSource | null = null;
     let isMounted = true;
+    let debounceTimer: NodeJS.Timeout | null = null;
+
+    const triggerDebouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (isMounted) fetchData();
+      }, 750);
+    };
 
     const rawBase = (process.env.NEXT_PUBLIC_API_URL || API_BASE_URL || "http://localhost:5000/api").replace(/\/+$/, "");
     const streamBase = rawBase.endsWith("/api") ? `${rawBase}/messages/stream` : `${rawBase}/api/messages/stream`;
@@ -346,19 +354,19 @@ export default function AppMailPage() {
             } catch {}
           }
 
-          // Directly refresh inbox so the new email appears immediately at the top
-          fetchData();
+          // Debounced inbox refresh so batch arrivals never freeze the UI
+          triggerDebouncedRefresh();
         } else if (data.type === "SYNC_PROGRESS") {
           if (data.ingestedCount > 0 && isSyncingRef.current) {
             showToast(`Syncing: ${data.ingestedCount} emails processed...`);
           }
-        } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED") {
+        } else if (data.type === "SYNC_COMPLETE" || data.type === "EMAIL_SAVED" || data.type === "account_connected") {
           if (data.ingestedCount > 0) {
             showToast(`📬 Received ${data.ingestedCount} new email(s)!`);
-            fetchData();
           } else if (isSyncingRef.current) {
             showToast("Mailboxes up to date.");
           }
+          triggerDebouncedRefresh();
         }
       } catch (e) {}
     };
@@ -391,7 +399,7 @@ export default function AppMailPage() {
         const now = Date.now();
         if (now - lastFocusCheck > 30000) {
           lastFocusCheck = now;
-          fetchData();
+          triggerDebouncedRefresh();
           apiFetch("/api/accounts/sync", { method: "POST" }).catch(() => {});
         }
       }
@@ -401,6 +409,7 @@ export default function AppMailPage() {
 
     return () => {
       isMounted = false;
+      if (debounceTimer) clearTimeout(debounceTimer);
       if (eventSource) eventSource.close();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleVisibilityChange);
