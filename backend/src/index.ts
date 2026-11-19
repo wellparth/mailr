@@ -12,6 +12,7 @@ import automationRoutes from './routes/automationRoutes.js';
 import { SyncService } from './services/syncService.js';
 import { ScheduledMailService } from './services/scheduledMailService.js';
 import { ImapIdleService } from './services/imapIdleService.js';
+import { AIService } from './services/aiService.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
 import prisma from './db.js';
 
@@ -112,6 +113,16 @@ app.listen(PORT, () => {
         } catch (err) {
           console.warn(`[BackgroundSync] Account ${acc.emailAddress} sync warning:`, err);
         }
+      }
+
+      // Autonomous AI Agent Background Audit (Runs 24/7 on server even when user is offline)
+      try {
+        const audit = await AIService.auditAndClassifyExistingThreads();
+        if (audit.classifiedCount > 0) {
+          console.log(`[AIAgent] Autonomously classified & flagged ${audit.classifiedCount} incoming/unclassified thread(s) on server.`);
+        }
+      } catch (auditErr) {
+        console.warn('[AIAgent] Background thread audit notice:', auditErr);
       }
     } catch (err) {
       console.error('[BackgroundSync] Scheduled sync loop error:', err);

@@ -303,4 +303,57 @@ router.post('/compose/rewrite', async (req: AuthenticatedRequest, res: Response)
   }
 });
 
+// 7. Inbox Health Report & Smart Clean-up Suggestions (Per Inbox or Unified)
+router.get('/inbox/health', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const accountId = (req.query.accountId as string) || undefined;
+    const report = await AIService.getInboxCleanupReport(req.user!.id, accountId);
+    res.json({ success: true, report });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Inbox health report error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 8. Execute Clean-up Actions (Archive, Trash, or 1-Click Unsubscribe)
+router.post('/inbox/cleanup/execute', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { action, threadIds, unsubscribeUrl } = req.body;
+    if (!action || !threadIds || !Array.isArray(threadIds)) {
+      res.status(400).json({ error: 'Valid action and threadIds array are required.' });
+      return;
+    }
+
+    const result = await AIService.executeInboxCleanup(req.user!.id, {
+      action,
+      threadIds,
+      unsubscribeUrl,
+    });
+
+    syncBroadcaster.notifyUser(req.user!.id, 'inbox_cleaned', {
+      action,
+      affectedCount: result.affectedCount,
+    });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Cleanup execution error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 9. Force Immediate Background AI Audit & Classification of Inbox Threads
+router.post('/inbox/audit-now', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const audit = await AIService.auditAndClassifyExistingThreads(req.user!.id);
+    syncBroadcaster.notifyUser(req.user!.id, 'inbox_audited', {
+      classifiedCount: audit.classifiedCount,
+    });
+    res.json({ success: true, ...audit });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Audit error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 export default router;

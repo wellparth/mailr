@@ -188,11 +188,21 @@ export class SyncService {
 
           // 1. Run AI Priority Scoring (NORMAL for self-sent outbound emails)
           const priority = isSentFolder
-            ? { score: 30, level: 'NORMAL' as const, reason: 'Outbound sent message' }
+            ? {
+                score: 30,
+                level: 'NORMAL' as const,
+                reason: 'Outbound sent message',
+                category: 'PRIMARY' as const,
+                requiresReply: false,
+                isNoReply: false,
+                hasUsefulContent: false,
+              }
             : AIService.calculatePriority(
                 msg.subject,
                 msg.bodyText || msg.bodyHtml || '',
-                account.emailAddress
+                msg.senderEmail,
+                msg.unsubscribeUrl,
+                Boolean(msg.isNewsletter)
               );
 
           // 2. Run AI Calendar Proposal Detection
@@ -231,6 +241,8 @@ export class SyncService {
                 priorityScore: priority.score,
                 priorityLevel: priority.level,
                 priorityReason: priority.reason,
+                aiCategory: priority.category,
+                requiresReply: priority.requiresReply,
                 lastMessageAt: msg.receivedAt,
                 isNewsletter,
                 isArchived: shouldAutoBundle ? true : false,
@@ -249,6 +261,8 @@ export class SyncService {
                 priorityScore: Math.max(thread.priorityScore, priority.score),
                 priorityLevel: priority.score > thread.priorityScore ? priority.level : thread.priorityLevel,
                 priorityReason: priority.reason || thread.priorityReason,
+                aiCategory: isNewer ? priority.category : thread.aiCategory,
+                requiresReply: isNewer ? priority.requiresReply : thread.requiresReply,
                 isNewsletter: thread.isNewsletter || isNewsletter,
                 isArchived: shouldAutoBundle ? true : thread.isArchived,
               },

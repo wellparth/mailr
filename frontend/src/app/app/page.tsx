@@ -13,6 +13,7 @@ import { AICopilotDrawer } from "@/components/ai-copilot-drawer";
 import { CommandPalette, CommandItem } from "@/components/command-palette";
 import { ShortcutsDialog } from "@/components/shortcuts-dialog";
 import { MorningBriefingDialog } from "@/components/morning-briefing-dialog";
+import { InboxCleanupDialog } from "@/components/inbox-cleanup-dialog";
 import { Button } from "@/components/ui/button";
 import { Sparkles, CheckCircle2, PenSquare, RotateCcw, Clock, Calendar, SunMedium, Keyboard, Inbox, Newspaper, Send, FileText, Trash2, Archive, Bot, Star, RefreshCw, Settings, PanelLeft, PanelLeftClose, PanelLeftOpen, Columns } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ export default function AppMailPage() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = React.useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = React.useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = React.useState(false);
+  const [isCleanupOpen, setIsCleanupOpen] = React.useState(false);
 
   // Collapsible & Resizable Sidebar state
   const [isRailCollapsed, setIsRailCollapsed] = React.useState<boolean>(false);
@@ -937,6 +939,7 @@ export default function AppMailPage() {
         onDeepSyncNow={() => handleSyncNow(true)}
         onOpenBriefing={() => setIsBriefingOpen(true)}
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
+        onOpenCleanup={() => setIsCleanupOpen(true)}
         isRailCollapsed={isRailCollapsed}
         onToggleRail={handleToggleRail}
         mailListWidth={mailListWidth}
@@ -1119,6 +1122,15 @@ export default function AppMailPage() {
         onNavigateToNewsletters={() => {
           setNavSection("newsletters");
         }}
+      />
+
+      {/* AI Inbox Clean-up & Optimization Dialog */}
+      <InboxCleanupDialog
+        open={isCleanupOpen}
+        onOpenChange={setIsCleanupOpen}
+        accounts={accounts}
+        initialAccountId={selectedAccountId}
+        onInboxCleaned={fetchData}
       />
 
     </SidebarProvider>

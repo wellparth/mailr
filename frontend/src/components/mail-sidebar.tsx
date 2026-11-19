@@ -81,6 +81,8 @@ export interface ThreadItem {
   isStarred: boolean;
   isArchived: boolean;
   isNewsletter?: boolean;
+  aiCategory?: string | null;
+  requiresReply?: boolean;
   snoozedUntil?: string | null;
   lastMessageAt: string;
   account: {
@@ -113,6 +115,7 @@ interface MailSidebarProps {
   onNavChange: (nav: any) => void;
   onOpenBriefing?: () => void;
   onOpenShortcuts?: () => void;
+  onOpenCleanup?: () => void;
   selectedAccountId: string;
   onAccountChange: (accountId: string) => void;
   unreadOnly: boolean;
@@ -148,6 +151,7 @@ export function MailSidebar({
   onSelectThread,
   activeNav,
   onNavChange,
+  onOpenCleanup,
   selectedAccountId,
   onAccountChange,
   unreadOnly,
@@ -770,7 +774,7 @@ export function MailSidebar({
           </div>
         </SidebarHeader>
 
-        {/* Email count and deep sync status header */}
+        {/* Email count, AI Clean-up, and deep sync status header */}
         <div className="px-3 py-1.5 bg-muted/20 border-b border-border/40 flex items-center justify-between text-[11px] text-muted-foreground shrink-0">
           <span>
             {threads.length > 0 ? (
@@ -779,18 +783,31 @@ export function MailSidebar({
               "0 emails"
             )}
           </span>
-          {onDeepSyncNow && accounts.length > 0 && (
-            <button
-              type="button"
-              onClick={onDeepSyncNow}
-              disabled={syncing}
-              className="text-[10px] text-sky-400 hover:text-sky-300 font-medium hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              title="Sync all past emails from your connected accounts"
-            >
-              <RefreshCw className={`h-2.5 w-2.5 ${syncing ? "animate-spin" : ""}`} />
-              <span>Full Sync</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2.5">
+            {onOpenCleanup && (
+              <button
+                type="button"
+                onClick={onOpenCleanup}
+                className="text-[10px] text-sky-400 hover:text-sky-300 font-medium hover:underline flex items-center gap-1 cursor-pointer"
+                title="AI Clean-up & Unsubscribe suggestions for this inbox"
+              >
+                <Sparkles className="h-2.5 w-2.5" />
+                <span>Clean Inbox</span>
+              </button>
+            )}
+            {onDeepSyncNow && accounts.length > 0 && (
+              <button
+                type="button"
+                onClick={onDeepSyncNow}
+                disabled={syncing}
+                className="text-[10px] text-muted-foreground hover:text-foreground font-medium hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                title="Sync all past emails from your connected accounts"
+              >
+                <RefreshCw className={`h-2.5 w-2.5 ${syncing ? "animate-spin" : ""}`} />
+                <span>Full Sync</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Email Thread List */}
@@ -904,13 +921,55 @@ export function MailSidebar({
                             </span>
                           )}
 
+                          {/* AI Category Badges */}
+                          {thread.aiCategory === "USEFUL_TRANSACTIONAL" && (
+                            <span
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-emerald-500/40 text-emerald-400 bg-emerald-500/10 font-medium shrink-0 flex items-center gap-0.5"
+                              title={thread.priorityReason || "Useful automated receipt / notice (no reply needed)"}
+                            >
+                              🧾 Receipt
+                            </span>
+                          )}
+                          {thread.aiCategory === "AUTOMATED_NO_REPLY" && (
+                            <span
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-slate-500/40 text-slate-400 bg-slate-500/10 font-medium shrink-0 flex items-center gap-0.5"
+                              title={thread.priorityReason || "Automated no-reply notification • No reply needed"}
+                            >
+                              🤖 No Reply
+                            </span>
+                          )}
+                          {thread.aiCategory === "ACTION_REQUIRED" && (
+                            <span
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10 font-medium shrink-0 flex items-center gap-0.5"
+                              title={thread.priorityReason || "Direct correspondence requesting action or reply"}
+                            >
+                              ⚡ Reply Needed
+                            </span>
+                          )}
+                          {thread.aiCategory === "NEWSLETTER" && (
+                            <span
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-sky-500/40 text-sky-400 bg-sky-500/10 font-medium shrink-0 flex items-center gap-0.5"
+                              title="Curated publication or periodic newsletter"
+                            >
+                              📰 Newsletter
+                            </span>
+                          )}
+                          {thread.aiCategory === "PROMOTIONAL" && (
+                            <span
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-purple-500/40 text-purple-400 bg-purple-500/10 font-medium shrink-0 flex items-center gap-0.5"
+                              title="Promotional offer or sales blast"
+                            >
+                              🏷️ Promo
+                            </span>
+                          )}
+
                           {/* Priority Badge */}
                           {thread.priorityLevel === "URGENT" && (
                             <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4 uppercase">
                               Urgent
                             </Badge>
                           )}
-                          {thread.priorityLevel === "HIGH" && (
+                          {thread.priorityLevel === "HIGH" && !thread.aiCategory && (
                             <Badge className="bg-emerald-950 text-emerald-300 border-emerald-500/30 text-[9px] px-1 py-0 h-4">
                               Priority
                             </Badge>

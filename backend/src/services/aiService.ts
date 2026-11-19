@@ -16,7 +16,58 @@ export interface ParsedTriageAction {
   summary: string;
 }
 
-export type EmailCategory = 'PROMOTIONAL' | 'SPAM' | 'NEWSLETTER' | 'NOTIFICATION' | 'PRIMARY';
+export type EmailCategory =
+  | 'ACTION_REQUIRED'
+  | 'USEFUL_TRANSACTIONAL'
+  | 'AUTOMATED_NO_REPLY'
+  | 'NEWSLETTER'
+  | 'PROMOTIONAL'
+  | 'SPAM'
+  | 'NOTIFICATION'
+  | 'PRIMARY';
+
+export interface PriorityAssessment {
+  score: number;
+  level: PriorityLevel;
+  reason: string;
+  category: EmailCategory;
+  requiresReply: boolean;
+  isNoReply: boolean;
+  hasUsefulContent: boolean;
+  usefulType?: 'VERIFICATION_2FA' | 'RECEIPT_BILLING' | 'TRAVEL_BOOKING' | 'SECURITY_ALERT';
+}
+
+export interface CleanupSuggestion {
+  id: string;
+  type: 'UNSUBSCRIBE' | 'ARCHIVE_NO_REPLY' | 'ARCHIVE_PROMOS' | 'REVIEW_REPLIES';
+  title: string;
+  description: string;
+  badge: string;
+  badgeVariant?: 'default' | 'secondary' | 'destructive' | 'outline';
+  affectedCount: number;
+  threadIds: string[];
+  senderEmail?: string;
+  unsubscribeUrl?: string;
+  actionText: string;
+}
+
+export interface InboxHealthReport {
+  accountId: string;
+  accountEmail: string;
+  healthScore: number;
+  totalInboxThreads: number;
+  unnecessaryCount: number;
+  breakdown: {
+    actionRequired: number;
+    usefulTransactional: number;
+    automatedNoReply: number;
+    newsletters: number;
+    promotional: number;
+    spam: number;
+    primary: number;
+  };
+  suggestions: CleanupSuggestion[];
+}
 
 export interface EmailClassification {
   threadId: string;
@@ -210,66 +261,267 @@ export class AIService {
   }
 
   /**
-   * Score priority of an email thread.
+   * Score priority and categorize an email thread.
+   * Differentiates automated no-reply emails: flags as low-priority noise unless the
+   * content is genuinely useful (2FA verification, invoice receipt, flight booking, security alert).
    */
-  static calculatePriority(subject: string, snippet: string, senderEmail: string): {
-    score: number;
-    level: PriorityLevel;
-    reason: string;
-  } {
-    const text = `${subject} ${snippet}`.toLowerCase();
-    let score = 50;
-    let reason = 'Standard correspondence';
+  static calculatePriority(
+    subject: string,
+    snippet: string,
+    senderEmail: string,
+    unsubscribeUrl?: string | null,
+    isNewsletter?: boolean
+  ): PriorityAssessment {
+    const text = `${subject || ''} ${snippet || ''}`.toLowerCase();
+    const sender = (senderEmail || '').toLowerCase();
 
-    // Critical/Urgent signals
+    // 1. Detect if sender is an automated no-reply bot/system
+    const isNoReply =
+      sender.includes('noreply') ||
+      sender.includes('no-reply') ||
+      sender.includes('donotreply') ||
+      sender.includes('do-not-reply') ||
+      sender.includes('notifications@') ||
+      sender.includes('notification@') ||
+      sender.includes('mailer-daemon') ||
+      sender.includes('system@') ||
+      sender.includes('alert@') ||
+      sender.includes('alerts@') ||
+      sender.includes('automated@') ||
+      sender.includes('bounce@') ||
+      sender.includes('service@') ||
+      sender.includes('updates@') ||
+      text.includes('do not reply to this email') ||
+      text.includes('this is an automated message') ||
+      text.includes('this email was sent from a notification-only address');
+
+    // 2. Detect if content contains genuinely useful transactional/security info
+    const hasVerificationCode =
+      /\b\d{4,8}\b/.test(text) &&
+      (text.includes('verification code') ||
+        text.includes('security code') ||
+        text.includes('one-time password') ||
+        text.includes('otp') ||
+        text.includes('confirm your email') ||
+        text.includes('login code') ||
+        text.includes('password reset') ||
+        text.includes('temporary password') ||
+        text.includes('authorization code'));
+
+    const isCriticalSecurityAlert =
+      text.includes('security alert') ||
+      text.includes('new sign-in') ||
+      text.includes('suspicious activity') ||
+      text.includes('account recovery') ||
+      text.includes('unauthorized access') ||
+      text.includes('password changed');
+
+    const isReceiptOrBilling =
+      text.includes('receipt for') ||
+      text.includes('your receipt') ||
+      text.includes('order confirmation') ||
+      text.includes('order #') ||
+      text.includes('invoice #') ||
+      text.includes('invoice attached') ||
+      text.includes('payment received') ||
+      text.includes('payment confirmation') ||
+      text.includes('subscription renewed') ||
+      text.includes('tracking number') ||
+      text.includes('package has been delivered') ||
+      text.includes('out for delivery') ||
+      text.includes('statement is ready') ||
+      text.includes('refund processed');
+
+    const isTravelOrBooking =
+      text.includes('flight confirmation') ||
+      text.includes('boarding pass') ||
+      text.includes('hotel reservation') ||
+      text.includes('booking reference') ||
+      text.includes('itinerary for your trip') ||
+      text.includes('e-ticket') ||
+      text.includes('check-in is open');
+
+    const hasUsefulContent = hasVerificationCode || isCriticalSecurityAlert || isReceiptOrBilling || isTravelOrBooking;
+    let usefulType: PriorityAssessment['usefulType'] = undefined;
+    if (hasVerificationCode) usefulType = 'VERIFICATION_2FA';
+    else if (isCriticalSecurityAlert) usefulType = 'SECURITY_ALERT';
+    else if (isReceiptOrBilling) usefulType = 'RECEIPT_BILLING';
+    else if (isTravelOrBooking) usefulType = 'TRAVEL_BOOKING';
+
+    // 3. Evaluate No-Reply Senders with Useful vs Unuseful Filter
+    if (isNoReply) {
+      if (hasUsefulContent) {
+        let reason = 'Useful automated notice (no response needed).';
+        if (hasVerificationCode) reason = 'Contains 2FA / verification security code.';
+        else if (isReceiptOrBilling) reason = 'Payment receipt / order confirmation.';
+        else if (isTravelOrBooking) reason = 'Travel booking / itinerary confirmation.';
+        else if (isCriticalSecurityAlert) reason = 'Critical security / account alert.';
+
+        const score = isCriticalSecurityAlert || hasVerificationCode ? 85 : 75;
+        return {
+          score,
+          level: score >= 80 ? PriorityLevel.HIGH : PriorityLevel.NORMAL,
+          reason,
+          category: 'USEFUL_TRANSACTIONAL',
+          requiresReply: false,
+          isNoReply: true,
+          hasUsefulContent: true,
+          usefulType,
+        };
+      }
+
+      // Check if it's promotional or newsletter from a no-reply address
+      if (text.includes('% off') || text.includes('discount') || text.includes('sale') || text.includes('deal')) {
+        return {
+          score: 20,
+          level: PriorityLevel.LOW,
+          reason: 'Automated promotional marketing blast.',
+          category: 'PROMOTIONAL',
+          requiresReply: false,
+          isNoReply: true,
+          hasUsefulContent: false,
+        };
+      }
+
+      if (isNewsletter || Boolean(unsubscribeUrl) || text.includes('unsubscribe') || text.includes('digest')) {
+        return {
+          score: 25,
+          level: PriorityLevel.LOW,
+          reason: 'Automated newsletter / publication digest.',
+          category: 'NEWSLETTER',
+          requiresReply: false,
+          isNoReply: true,
+          hasUsefulContent: false,
+        };
+      }
+
+      // Routine unuseful no-reply notice
+      return {
+        score: 20,
+        level: PriorityLevel.LOW,
+        reason: 'Automated no-reply notification • No action or reply needed.',
+        category: 'AUTOMATED_NO_REPLY',
+        requiresReply: false,
+        isNoReply: true,
+        hasUsefulContent: false,
+      };
+    }
+
+    // 4. Check for Spam / Phishing
+    const spamKeywords = [
+      'crypto wallet', 'wire transfer', 'lottery winner', 'inheritance fund',
+      'verify your wallet', 'western union', 'bitcoin deposit', 'eth transfer',
+      'claim your prize', 'congratulations you won', 'foreign beneficiary',
+      'million dollars transfer',
+    ];
+    if (spamKeywords.some((kw) => text.includes(kw))) {
+      return {
+        score: 5,
+        level: PriorityLevel.LOW,
+        reason: 'Suspected spam or high-risk solicitation.',
+        category: 'SPAM',
+        requiresReply: false,
+        isNoReply: false,
+        hasUsefulContent: false,
+      };
+    }
+
+    // 5. Check for Promotional Emails
+    const promoKeywords = [
+      '% off', 'percent off', 'discount code', 'coupon code', 'promo code',
+      'flash sale', 'clearance', 'black friday', 'limited time offer',
+      'special offer', 'save up to', 'exclusive pricing', 'shop now and save',
+    ];
+    const isPromoSender =
+      sender.includes('promo') ||
+      sender.includes('deals@') ||
+      sender.includes('offers@') ||
+      sender.includes('marketing@') ||
+      sender.includes('store@') ||
+      sender.includes('sales@');
+    if (promoKeywords.some((kw) => text.includes(kw)) || isPromoSender) {
+      return {
+        score: 20,
+        level: PriorityLevel.LOW,
+        reason: 'Promotional campaign or sales advertisement.',
+        category: 'PROMOTIONAL',
+        requiresReply: false,
+        isNoReply: false,
+        hasUsefulContent: false,
+      };
+    }
+
+    // 6. Check for Newsletters
     if (
+      isNewsletter ||
+      Boolean(unsubscribeUrl) ||
+      sender.includes('newsletter') ||
+      sender.includes('substack.com') ||
+      sender.includes('medium.com') ||
+      text.includes('weekly digest') ||
+      text.includes('monthly roundup') ||
+      text.includes('you received this email because you subscribed')
+    ) {
+      return {
+        score: 25,
+        level: PriorityLevel.LOW,
+        reason: 'Curated publication or periodic newsletter.',
+        category: 'NEWSLETTER',
+        requiresReply: false,
+        isNoReply: false,
+        hasUsefulContent: false,
+      };
+    }
+
+    // 7. Check for Direct Human Correspondence Requiring Action / Reply
+    const isUrgent =
       text.includes('urgent') ||
       text.includes('asap') ||
       text.includes('critical') ||
       text.includes('action required') ||
       text.includes('immediate attention') ||
       text.includes('emergency') ||
-      text.includes('deadline today')
-    ) {
-      score = 95;
-      reason = 'Contains high-urgency keywords or immediate action deadline.';
-      return { score, level: PriorityLevel.URGENT, reason };
-    }
+      text.includes('deadline today');
 
-    // High priority signals: client inquiries, contracts, payments, interview, calendar
-    if (
+    const asksQuestionOrAction =
+      text.includes('?') ||
+      text.includes('please let me know') ||
+      text.includes('can you') ||
+      text.includes('could you') ||
+      text.includes('waiting on your') ||
+      text.includes('feedback on') ||
+      text.includes('what do you think') ||
+      text.includes('are you free') ||
+      text.includes('meeting request') ||
       text.includes('proposal') ||
       text.includes('contract') ||
-      text.includes('invoice') ||
-      text.includes('payment') ||
-      text.includes('offer') ||
-      text.includes('meeting request') ||
-      text.includes('interview') ||
-      text.includes('signed')
-    ) {
-      score = 80;
-      reason = 'Important business correspondence (contracts, invoices, or proposals).';
-      return { score, level: PriorityLevel.HIGH, reason };
+      text.includes('review attached');
+
+    if (asksQuestionOrAction || isUrgent) {
+      const score = isUrgent ? 95 : 85;
+      return {
+        score,
+        level: isUrgent ? PriorityLevel.URGENT : PriorityLevel.HIGH,
+        reason: isUrgent
+          ? 'Urgent direct inquiry with immediate action required.'
+          : 'Direct correspondence requesting your review or reply.',
+        category: 'ACTION_REQUIRED',
+        requiresReply: true,
+        isNoReply: false,
+        hasUsefulContent: true,
+      };
     }
 
-    // Low priority signals: newsletters, receipts, notifications, marketing
-    if (
-      text.includes('unsubscribe') ||
-      text.includes('newsletter') ||
-      text.includes('digest') ||
-      text.includes('sale') ||
-      text.includes('discount') ||
-      text.includes('marketing') ||
-      senderEmail.includes('noreply') ||
-      senderEmail.includes('no-reply') ||
-      senderEmail.includes('notifications@')
-    ) {
-      score = 20;
-      reason = 'Automated marketing, newsletter, or notification.';
-      return { score, level: PriorityLevel.LOW, reason };
-    }
-
-    return { score, level: PriorityLevel.NORMAL, reason };
+    // 8. Standard Primary FYI Correspondence
+    return {
+      score: 50,
+      level: PriorityLevel.NORMAL,
+      reason: 'Direct human correspondence (for your information).',
+      category: 'PRIMARY',
+      requiresReply: false,
+      isNoReply: false,
+      hasUsefulContent: true,
+    };
   }
 
   /**
@@ -639,5 +891,320 @@ export class AIService {
       default:
         return `Hi,\n\nThank you for following up on "${cleanSubject}". I have reviewed the details and will get back to you with the finalized feedback before our next checkpoint.\n\nPlease let me know if anything urgent arises in the meantime.\n\nBest regards,\nSent via Mailr`;
     }
+  }
+
+  /**
+   * Autonomous background worker: Audit and classify unclassified or existing threads across all inboxes.
+   * Runs on the server even when the user is offline or not logged in.
+   */
+  static async auditAndClassifyExistingThreads(userId?: string): Promise<{ classifiedCount: number }> {
+    const where: any = {
+      isArchived: false,
+      OR: [
+        { aiCategory: null },
+        { aiCategory: 'PRIMARY', priorityScore: 50 },
+      ],
+    };
+    if (userId) {
+      where.account = { userId };
+    }
+
+    const threads = await prisma.thread.findMany({
+      where,
+      take: 200,
+      orderBy: { lastMessageAt: 'desc' },
+      include: {
+        messages: {
+          take: 1,
+          orderBy: { receivedAt: 'desc' },
+          select: {
+            senderEmail: true,
+            subject: true,
+            snippet: true,
+            bodyText: true,
+            unsubscribeUrl: true,
+            isNewsletter: true,
+          },
+        },
+      },
+    });
+
+    let classifiedCount = 0;
+    for (const thread of threads) {
+      const latest = thread.messages[0];
+      if (!latest) continue;
+
+      const assessment = this.calculatePriority(
+        thread.subject,
+        latest.snippet || latest.bodyText?.substring(0, 500) || '',
+        latest.senderEmail,
+        latest.unsubscribeUrl,
+        latest.isNewsletter || thread.isNewsletter
+      );
+
+      await prisma.thread.update({
+        where: { id: thread.id },
+        data: {
+          aiCategory: assessment.category,
+          requiresReply: assessment.requiresReply,
+          priorityScore: assessment.score,
+          priorityLevel: assessment.level,
+          priorityReason: assessment.reason,
+          isNewsletter: thread.isNewsletter || assessment.category === 'NEWSLETTER',
+        },
+      });
+      classifiedCount++;
+    }
+
+    return { classifiedCount };
+  }
+
+  /**
+   * Generate intelligent clean-up suggestions per inbox or unified inbox.
+   */
+  static async getInboxCleanupReport(userId: string, accountId?: string): Promise<InboxHealthReport> {
+    const where: any = {
+      account: { userId },
+      isArchived: false,
+    };
+    if (accountId && accountId !== 'all') {
+      where.accountId = accountId;
+    }
+
+    // 1. Fetch all active inbox threads with latest message
+    const threads = await prisma.thread.findMany({
+      where,
+      orderBy: { lastMessageAt: 'desc' },
+      take: 500,
+      include: {
+        account: {
+          select: {
+            id: true,
+            emailAddress: true,
+            displayName: true,
+          },
+        },
+        messages: {
+          take: 1,
+          orderBy: { receivedAt: 'desc' },
+          select: {
+            id: true,
+            senderEmail: true,
+            senderName: true,
+            unsubscribeUrl: true,
+            bodyHtml: true,
+            isRead: true,
+          },
+        },
+      },
+    });
+
+    // 2. Breakdown counts
+    let actionRequiredCount = 0;
+    let usefulTransactionalCount = 0;
+    let automatedNoReplyCount = 0;
+    let newslettersCount = 0;
+    let promotionalCount = 0;
+    let spamCount = 0;
+    let primaryCount = 0;
+
+    const noReplyThreadIds: string[] = [];
+    const promoThreadIds: string[] = [];
+    const spamThreadIds: string[] = [];
+    const actionRequiredThreadIds: string[] = [];
+
+    // Group newsletters by sender for 1-click unsubscribe suggestions
+    const newsletterSenderMap = new Map<string, {
+      senderName: string;
+      senderEmail: string;
+      unsubscribeUrl?: string;
+      threadIds: string[];
+      unreadCount: number;
+    }>();
+
+    for (const t of threads) {
+      const cat = t.aiCategory || 'PRIMARY';
+      const latest = t.messages[0];
+      const sender = latest?.senderEmail || '';
+
+      switch (cat) {
+        case 'ACTION_REQUIRED':
+          actionRequiredCount++;
+          actionRequiredThreadIds.push(t.id);
+          break;
+        case 'USEFUL_TRANSACTIONAL':
+          usefulTransactionalCount++;
+          break;
+        case 'AUTOMATED_NO_REPLY':
+          automatedNoReplyCount++;
+          noReplyThreadIds.push(t.id);
+          break;
+        case 'NEWSLETTER':
+          newslettersCount++;
+          if (sender) {
+            const existing = newsletterSenderMap.get(sender) || {
+              senderName: latest?.senderName || sender.split('@')[0],
+              senderEmail: sender,
+              unsubscribeUrl: latest?.unsubscribeUrl || undefined,
+              threadIds: [],
+              unreadCount: 0,
+            };
+            existing.threadIds.push(t.id);
+            if (!latest?.isRead) existing.unreadCount++;
+            if (!existing.unsubscribeUrl && latest?.bodyHtml) {
+              const match = latest.bodyHtml.match(/href=["'](https?:\/\/[^"']*(?:unsubscribe|optout|opt-out|preferences)[^"']*)["']/i);
+              if (match) existing.unsubscribeUrl = match[1];
+            }
+            newsletterSenderMap.set(sender, existing);
+          }
+          break;
+        case 'PROMOTIONAL':
+          promotionalCount++;
+          promoThreadIds.push(t.id);
+          break;
+        case 'SPAM':
+          spamCount++;
+          spamThreadIds.push(t.id);
+          break;
+        case 'PRIMARY':
+        default:
+          primaryCount++;
+          break;
+      }
+    }
+
+    const unnecessaryTotal = automatedNoReplyCount + newslettersCount + promotionalCount + spamCount;
+    const healthScore = threads.length === 0
+      ? 100
+      : Math.max(10, Math.round(((threads.length - unnecessaryTotal) / threads.length) * 100));
+
+    // 3. Formulate Actionable Clean-up Suggestions
+    const suggestions: CleanupSuggestion[] = [];
+
+    // Suggestion A: Specific Unsubscribe recommendations
+    for (const [senderEmail, group] of newsletterSenderMap.entries()) {
+      if (group.threadIds.length >= 1) {
+        suggestions.push({
+          id: `unsub_${Buffer.from(senderEmail).toString('hex').substring(0, 16)}`,
+          type: 'UNSUBSCRIBE',
+          title: `Unsubscribe from ${group.senderName || senderEmail}`,
+          description: `${group.threadIds.length} email(s) in inbox (${group.unreadCount} unread). Unsubscribe & clean from inbox.`,
+          badge: 'Newsletter',
+          badgeVariant: 'secondary',
+          affectedCount: group.threadIds.length,
+          threadIds: group.threadIds,
+          senderEmail,
+          unsubscribeUrl: group.unsubscribeUrl,
+          actionText: group.unsubscribeUrl ? 'Unsubscribe & Archive' : 'Archive All from Sender',
+        });
+      }
+    }
+
+    // Suggestion B: Automated No-Reply bulk clean
+    if (noReplyThreadIds.length > 0) {
+      suggestions.push({
+        id: `archive_no_reply_${accountId || 'all'}`,
+        type: 'ARCHIVE_NO_REPLY',
+        title: `Archive ${noReplyThreadIds.length} No-Reply Notifications`,
+        description: 'Automated robot notifications and routine system pings that need no response.',
+        badge: 'Automated Bot',
+        badgeVariant: 'outline',
+        affectedCount: noReplyThreadIds.length,
+        threadIds: noReplyThreadIds,
+        actionText: 'Archive All No-Reply',
+      });
+    }
+
+    // Suggestion C: Promotional marketing sweep
+    if (promoThreadIds.length > 0) {
+      suggestions.push({
+        id: `archive_promos_${accountId || 'all'}`,
+        type: 'ARCHIVE_PROMOS',
+        title: `Clean ${promoThreadIds.length} Promotional Campaigns`,
+        description: 'Coupons, store discounts, and advertising blasts taking up space.',
+        badge: 'Promotions',
+        badgeVariant: 'secondary',
+        affectedCount: promoThreadIds.length,
+        threadIds: promoThreadIds,
+        actionText: 'Archive All Promos',
+      });
+    }
+
+    // Suggestion D: Action items waiting on you
+    if (actionRequiredThreadIds.length > 0) {
+      suggestions.push({
+        id: `review_replies_${accountId || 'all'}`,
+        type: 'REVIEW_REPLIES',
+        title: `${actionRequiredThreadIds.length} Conversations Awaiting Your Reply`,
+        description: 'Direct human correspondence with unanswered questions or tasks.',
+        badge: 'Reply Needed',
+        badgeVariant: 'default',
+        affectedCount: actionRequiredThreadIds.length,
+        threadIds: actionRequiredThreadIds,
+        actionText: 'Focus on Replies',
+      });
+    }
+
+    return {
+      accountId: accountId || 'all',
+      accountEmail: accountId && accountId !== 'all' ? (threads[0]?.account?.emailAddress || accountId) : 'All Connected Inboxes',
+      healthScore,
+      totalInboxThreads: threads.length,
+      unnecessaryCount: unnecessaryTotal,
+      breakdown: {
+        actionRequired: actionRequiredCount,
+        usefulTransactional: usefulTransactionalCount,
+        automatedNoReply: automatedNoReplyCount,
+        newsletters: newslettersCount,
+        promotional: promotionalCount,
+        spam: spamCount,
+        primary: primaryCount,
+      },
+      suggestions,
+    };
+  }
+
+  /**
+   * Execute 1-click clean-up actions on inbox threads (archive, trash, or unsubscribe).
+   */
+  static async executeInboxCleanup(
+    userId: string,
+    payload: {
+      action: 'UNSUBSCRIBE_AND_ARCHIVE' | 'ARCHIVE' | 'TRASH';
+      threadIds: string[];
+      unsubscribeUrl?: string;
+    }
+  ) {
+    const { action, threadIds, unsubscribeUrl } = payload;
+    if (!threadIds || threadIds.length === 0) {
+      return { success: true, affectedCount: 0, message: 'No threads selected for clean-up.' };
+    }
+
+    if (action === 'TRASH') {
+      await prisma.message.deleteMany({
+        where: { threadId: { in: threadIds }, account: { userId } },
+      });
+      await prisma.thread.deleteMany({
+        where: { id: { in: threadIds }, account: { userId } },
+      });
+    } else {
+      // Archive
+      await prisma.thread.updateMany({
+        where: { id: { in: threadIds }, account: { userId } },
+        data: { isArchived: true },
+      });
+      await prisma.message.updateMany({
+        where: { threadId: { in: threadIds }, account: { userId } },
+        data: { isArchived: true },
+      });
+    }
+
+    return {
+      success: true,
+      affectedCount: threadIds.length,
+      action,
+      unsubscribeUrl: unsubscribeUrl && /^https?:\/\//i.test(unsubscribeUrl) ? unsubscribeUrl : undefined,
+      message: `Cleaned ${threadIds.length} thread(s) from inbox.`,
+    };
   }
 }

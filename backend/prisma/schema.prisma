@@ -127,6 +127,8 @@ model Thread {
   isStarred      Boolean       @default(false) @map("is_starred")
   isArchived     Boolean       @default(false) @map("is_archived")
   isNewsletter   Boolean       @default(false) @map("is_newsletter")
+  aiCategory     String?       @default("PRIMARY") @map("ai_category") // "ACTION_REQUIRED" | "USEFUL_TRANSACTIONAL" | "AUTOMATED_NO_REPLY" | "NEWSLETTER" | "PROMOTIONAL" | "SPAM" | "PRIMARY"
+  requiresReply  Boolean       @default(false) @map("requires_reply")
   snoozedUntil   DateTime?     @map("snoozed_until")
   lastMessageAt  DateTime      @map("last_message_at")
   messages       Message[]
