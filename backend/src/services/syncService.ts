@@ -7,6 +7,7 @@ import { GmailAdapter } from '../adapters/GmailAdapter.js';
 import { OutlookAdapter } from '../adapters/OutlookAdapter.js';
 import { AIService } from './aiService.js';
 import { AlertNotificationService } from './alertNotificationService.js';
+import { AutomationRulesEngine } from './automationRulesEngine.js';
 import { NormalizedMessage, IEmailAdapter, SyncOptions } from '../adapters/EmailAdapter.js';
 import { ProviderType } from '@prisma/client';
 import { redis } from './redisClient.js';
@@ -329,6 +330,25 @@ export class SyncService {
               }
             ).catch((alertErr) => {
               console.warn('[SyncService] Urgent alert push notice:', alertErr);
+            });
+          }
+
+          // Ghost Mode: Evaluate autonomous background automation rules on inbound messages
+          if (!isSentFolder) {
+            AutomationRulesEngine.evaluateInboundMessage(account.userId, {
+              threadId: thread.id,
+              subject: thread.subject,
+              snippet: thread.snippet,
+              priorityLevel: thread.priorityLevel,
+              priorityScore: thread.priorityScore,
+              priorityReason: thread.priorityReason,
+              accountId: account.id,
+              senderName: msg.senderName,
+              senderEmail: msg.senderEmail,
+              bodyText: msg.bodyText,
+              receivedAt: msg.receivedAt,
+            }).catch((autoErr) => {
+              console.warn('[SyncService] Ghost mode rule evaluation notice:', autoErr);
             });
           }
 

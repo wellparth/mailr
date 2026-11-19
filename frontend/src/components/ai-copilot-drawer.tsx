@@ -31,6 +31,12 @@ import {
   Sun,
   History,
   Users,
+  Zap,
+  ShieldCheck,
+  Play,
+  Receipt,
+  MessageCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,6 +114,61 @@ export function AICopilotDrawer({
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [byokInfo, setByokInfo] = React.useState<{ provider: string; model?: string; hasCustomKey: boolean } | null>(null);
   const [cleaningCategory, setCleaningCategory] = React.useState<string | null>(null);
+
+  // Autonomous Ghost Mode Rules State
+  const [viewMode, setViewMode] = React.useState<"chat" | "rules">("chat");
+  const [automationRules, setAutomationRules] = React.useState<any[]>([]);
+  const [automationLogs, setAutomationLogs] = React.useState<any[]>([]);
+  const [loadingRules, setLoadingRules] = React.useState(false);
+  const [purgingStale, setPurgingStale] = React.useState(false);
+  const [purgeToast, setPurgeToast] = React.useState<string | null>(null);
+
+  const loadAutomations = React.useCallback(async () => {
+    try {
+      setLoadingRules(true);
+      const [rulesRes, logsRes] = await Promise.all([
+        apiFetch("/api/automations/rules"),
+        apiFetch("/api/automations/logs"),
+      ]);
+      if (rulesRes?.rules) setAutomationRules(rulesRes.rules);
+      if (logsRes?.logs) setAutomationLogs(logsRes.logs);
+    } catch (err) {
+      console.warn("Failed to load automations", err);
+    } finally {
+      setLoadingRules(false);
+    }
+  }, []);
+
+  const handleToggleRule = async (ruleId: string) => {
+    try {
+      const res: any = await apiFetch(`/api/automations/rules/${ruleId}/toggle`, {
+        method: "PATCH",
+      });
+      if (res?.success && res.rule) {
+        setAutomationRules((prev) =>
+          prev.map((r) => (r.id === ruleId ? { ...r, isEnabled: res.rule.isEnabled } : r))
+        );
+      }
+    } catch (err: any) {
+      alert("Failed to toggle rule: " + err.message);
+    }
+  };
+
+  const handleRunStalePurge = async () => {
+    try {
+      setPurgingStale(true);
+      const res: any = await apiFetch("/api/automations/run-stale-purge", {
+        method: "POST",
+      });
+      setPurgeToast(res.message || "Purge executed.");
+      loadAutomations();
+      setTimeout(() => setPurgeToast(null), 4000);
+    } catch (err: any) {
+      alert("Failed to run purge: " + err.message);
+    } finally {
+      setPurgingStale(false);
+    }
+  };
 
   // Resizable width state (persisted in localStorage)
   const [copilotWidth, setCopilotWidth] = React.useState<number>(380);
@@ -515,7 +576,217 @@ export function AICopilotDrawer({
         </div>
       </div>
 
-      {/* Quick Action Chips Bar */}
+      {/* Mode Switcher: Copilot Chat vs Autonomous Ghost Mode Rules */}
+      <div className="flex items-center justify-between border-b border-border bg-card/60 px-3 py-1.5 text-xs">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("chat")}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              viewMode === "chat"
+                ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+            }`}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            <span>Copilot Chat</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode("rules");
+              loadAutomations();
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              viewMode === "rules"
+                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+            }`}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>Ghost Mode</span>
+            {automationRules.filter((r) => r.isEnabled).length > 0 && (
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            )}
+          </button>
+        </div>
+
+        {viewMode === "rules" && (
+          <button
+            type="button"
+            onClick={loadAutomations}
+            disabled={loadingRules}
+            title="Refresh automations"
+            className="p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            <RefreshCw className={`h-3 w-3 ${loadingRules ? "animate-spin text-sky-400" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {viewMode === "rules" ? (
+        <div className="flex-1 overflow-y-auto p-3.5 space-y-4 text-xs">
+          {/* Header Card */}
+          <div className="p-3 rounded-xl bg-gradient-to-tr from-emerald-950/40 via-secondary/30 to-background border border-emerald-500/30 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-foreground flex items-center gap-1.5">
+                <Zap className="h-4 w-4 text-emerald-400" />
+                Autonomous Ghost Mode Engine
+              </span>
+              <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/40 bg-emerald-950/40">
+                24/7 Active
+              </Badge>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Rules execute automatically in the background on your server as new emails arrive. Zero manual prompting needed.
+            </p>
+          </div>
+
+          {/* Purge Toast */}
+          {purgeToast && (
+            <div className="p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span>{purgeToast}</span>
+            </div>
+          )}
+
+          {/* Active Automation Rules List */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider text-muted-foreground">
+                Active Automation Rules ({automationRules.filter((r) => r.isEnabled).length}/{automationRules.length})
+              </span>
+            </div>
+
+            {loadingRules && automationRules.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground">
+                <RefreshCw className="h-4 w-4 animate-spin mx-auto mb-2 text-sky-400" />
+                <span>Loading active rules...</span>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {automationRules.map((rule) => {
+                  const getRuleIcon = () => {
+                    switch (rule.triggerType) {
+                      case "RECEIPT_VAULT":
+                        return <Receipt className="h-3.5 w-3.5 text-emerald-400" />;
+                      case "DRAFT_PREPARER":
+                        return <Calendar className="h-3.5 w-3.5 text-sky-400" />;
+                      case "VIP_TAGGING":
+                        return <Sparkles className="h-3.5 w-3.5 text-amber-400" />;
+                      case "STALE_PURGE":
+                        return <Trash2 className="h-3.5 w-3.5 text-purple-400" />;
+                      default:
+                        return <Zap className="h-3.5 w-3.5 text-sky-400" />;
+                    }
+                  };
+
+                  return (
+                    <div
+                      key={rule.id}
+                      className={`p-3 rounded-xl border transition-all ${
+                        rule.isEnabled
+                          ? "bg-card/70 border-border/80 shadow-sm"
+                          : "bg-secondary/20 border-border/40 opacity-60"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <div className="p-1.5 rounded-lg bg-secondary/80 border border-border shrink-0 mt-0.5">
+                            {getRuleIcon()}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-foreground text-xs">{rule.name}</div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                              {rule.description}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Toggle switch */}
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                          <input
+                            type="checkbox"
+                            checked={rule.isEnabled}
+                            onChange={() => handleToggleRule(rule.id)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-8 h-4 bg-secondary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                      </div>
+
+                      <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
+                        <span className="font-mono">
+                          Executions: <strong className="text-foreground">{rule.runsCount || 0}</strong>
+                        </span>
+                        {rule.lastRunAt && (
+                          <span>Last run: {new Date(rule.lastRunAt).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                        )}
+                        {rule.triggerType === "STALE_PURGE" && (
+                          <button
+                            type="button"
+                            onClick={handleRunStalePurge}
+                            disabled={purgingStale}
+                            className="text-sky-400 hover:text-sky-300 font-medium hover:underline cursor-pointer flex items-center gap-1"
+                          >
+                            <Play className="h-2.5 w-2.5" />
+                            <span>{purgingStale ? "Purging..." : "Run Sweep Now"}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Execution Audit Trail / Recent Logs */}
+          <div className="space-y-2 pt-2 border-t border-border/40">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <History className="h-3.5 w-3.5" />
+                Execution Audit Trail
+              </span>
+              <Badge variant="outline" className="text-[9px] text-muted-foreground">
+                {automationLogs.length} events
+              </Badge>
+            </div>
+
+            {automationLogs.length === 0 ? (
+              <div className="p-4 rounded-xl bg-secondary/20 border border-border/40 text-center text-[11px] text-muted-foreground">
+                No automation events logged yet. Active rules will record audit entries here when triggered by inbound emails.
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1 text-[11px]">
+                {automationLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-2 rounded-lg bg-card/50 border border-border/50 space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-foreground truncate max-w-[200px]">
+                        {log.actionTaken}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    {log.thread?.subject && (
+                      <p className="text-[10px] text-muted-foreground truncate italic">
+                        Re: {log.thread.subject}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Quick Action Chips Bar */}
       <div className="p-2.5 bg-secondary/30 border-b border-border/50 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar">
         {activeThread ? (
           <>
@@ -1401,6 +1672,8 @@ export function AICopilotDrawer({
           <span>Shortcut: <kbd className="px-1 py-0.5 bg-secondary rounded border border-border">Ctrl+J</kbd></span>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

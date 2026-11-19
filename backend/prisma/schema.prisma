@@ -63,6 +63,8 @@ model User {
   threadNotes        ThreadNote[]
   calendarIntegrations CalendarIntegration[]
   agentChatMessages  AgentChatMessage[]
+  automationRules    AutomationRule[]
+  automationLogs     AutomationLog[]
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
@@ -127,6 +129,7 @@ model Thread {
   messages       Message[]
   notes          ThreadNote[]
   agentMessages  AgentChatMessage[]
+  automationLogs AutomationLog[]
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
@@ -259,4 +262,41 @@ model AgentChatMessage {
 
   @@index([userId, threadId])
   @@map("agent_chat_messages")
+}
+
+model AutomationRule {
+  id          String          @id @default(uuid())
+  userId      String          @map("user_id")
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?         @db.Text
+  triggerType String          @map("trigger_type")
+  conditions  Json
+  actions     Json
+  isEnabled   Boolean         @default(true) @map("is_enabled")
+  runsCount   Int             @default(0) @map("runs_count")
+  lastRunAt   DateTime?       @map("last_run_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  logs        AutomationLog[]
+
+  @@index([userId, isEnabled])
+  @@map("automation_rules")
+}
+
+model AutomationLog {
+  id          String         @id @default(uuid())
+  ruleId      String         @map("rule_id")
+  rule        AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  userId      String         @map("user_id")
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId    String?        @map("thread_id")
+  thread      Thread?        @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  messageId   String?        @map("message_id")
+  actionTaken String         @map("action_taken")
+  details     Json?
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("automation_logs")
 }
