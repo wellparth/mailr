@@ -191,6 +191,54 @@ export function MailDisplay({
     }
   }, [thread?.id, loadNotes]);
 
+  const sortedMessages = React.useMemo(() => {
+    return [...(thread?.messages || [])].sort(
+      (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
+    );
+  }, [thread?.messages]);
+
+  const latestMessage = sortedMessages[sortedMessages.length - 1] || thread?.messages?.[0];
+  const proposals = latestMessage?.calendarProposals || [];
+  const attachments = latestMessage?.attachments || [];
+  const [downloadingAttId, setDownloadingAttId] = React.useState<string | null>(null);
+
+  // Tracking expanded messages for long thread conversation histories
+  const [expandedMessageIds, setExpandedMessageIds] = React.useState<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (sortedMessages.length > 0) {
+      const latest = sortedMessages[sortedMessages.length - 1];
+      const initialExpanded = new Set<string>([latest.id]);
+      // Auto-expand any unread message
+      sortedMessages.forEach((m) => {
+        if (!m.isRead) initialExpanded.add(m.id);
+      });
+      setExpandedMessageIds(initialExpanded);
+    }
+  }, [thread?.id, sortedMessages.length]);
+
+  const toggleExpand = (msgId: string) => {
+    setExpandedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) {
+        next.delete(msgId);
+      } else {
+        next.add(msgId);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedMessageIds(new Set(sortedMessages.map((m) => m.id)));
+  };
+
+  const collapseAll = () => {
+    if (sortedMessages.length > 0) {
+      setExpandedMessageIds(new Set([sortedMessages[sortedMessages.length - 1].id]));
+    }
+  };
+
   // If NO thread is selected, display high-design Welcome & Multi-Account Guide
   if (!thread) {
     return (
@@ -336,54 +384,6 @@ export function MailDisplay({
       </div>
     );
   }
-
-  const sortedMessages = React.useMemo(() => {
-    return [...(thread?.messages || [])].sort(
-      (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
-    );
-  }, [thread?.messages]);
-
-  const latestMessage = sortedMessages[sortedMessages.length - 1] || thread.messages[0];
-  const proposals = latestMessage?.calendarProposals || [];
-  const attachments = latestMessage?.attachments || [];
-  const [downloadingAttId, setDownloadingAttId] = React.useState<string | null>(null);
-
-  // Tracking expanded messages for long thread conversation histories
-  const [expandedMessageIds, setExpandedMessageIds] = React.useState<Set<string>>(new Set());
-
-  React.useEffect(() => {
-    if (sortedMessages.length > 0) {
-      const latest = sortedMessages[sortedMessages.length - 1];
-      const initialExpanded = new Set<string>([latest.id]);
-      // Auto-expand any unread message
-      sortedMessages.forEach((m) => {
-        if (!m.isRead) initialExpanded.add(m.id);
-      });
-      setExpandedMessageIds(initialExpanded);
-    }
-  }, [thread?.id, sortedMessages.length]);
-
-  const toggleExpand = (msgId: string) => {
-    setExpandedMessageIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(msgId)) {
-        next.delete(msgId);
-      } else {
-        next.add(msgId);
-      }
-      return next;
-    });
-  };
-
-  const expandAll = () => {
-    setExpandedMessageIds(new Set(sortedMessages.map((m) => m.id)));
-  };
-
-  const collapseAll = () => {
-    if (sortedMessages.length > 0) {
-      setExpandedMessageIds(new Set([sortedMessages[sortedMessages.length - 1].id]));
-    }
-  };
 
   const handleDownloadAttachment = (att: AttachmentItem) => {
     try {
