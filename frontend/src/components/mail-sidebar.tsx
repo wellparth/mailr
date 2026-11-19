@@ -286,12 +286,12 @@ export function MailSidebar({
       {/* =========================================
           PRIMARY RAIL SIDEBAR (56px -> 220px on hover)
           - 56px compact icon rail by default
-          - Smoothly grows to the right on hover to 220px
+          - Smoothly grows to the right on hover to 220px (no bounce, instant ease-out)
           - Reveals full names, badges, inboxes, and profile
           ========================================= */}
       <div
         className={cn(
-          "relative shrink-0 transition-all duration-200 ease-in-out",
+          "relative shrink-0",
           isRailCollapsed ? "w-0 overflow-hidden" : "w-[56px]"
         )}
       >
@@ -299,84 +299,70 @@ export function MailSidebar({
           onMouseEnter={() => setIsRailHovered(true)}
           onMouseLeave={() => setIsRailHovered(false)}
           className={cn(
-            "absolute left-0 top-0 bottom-0 z-40 border-r border-border bg-card/95 backdrop-blur-md flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out select-none",
+            "absolute left-0 top-0 bottom-0 z-40 border-r border-border bg-card/95 backdrop-blur-md flex flex-col justify-between shrink-0 select-none overflow-hidden will-change-[width] transition-[width,box-shadow] duration-150 ease-out",
             isRailCollapsed
-              ? "!w-0 opacity-0 overflow-hidden border-r-0 p-0 pointer-events-none"
+              ? "!w-0 opacity-0 pointer-events-none"
               : isExpanded
-              ? "!w-[220px] opacity-100 shadow-2xl ring-1 ring-border/50"
-              : "!w-[56px] opacity-100 shadow-none overflow-hidden"
+              ? "!w-[220px] shadow-2xl ring-1 ring-border/50"
+              : "!w-[56px] shadow-none"
           )}
         >
           {/* Top: Brand Monogram + Title + Collapse Rail Button */}
-          <div className={cn(
-            "p-2 border-b border-border/40 transition-all shrink-0",
-            isExpanded ? "px-3 py-2.5" : "flex flex-col items-center gap-1.5"
-          )}>
-            <div className="flex items-center justify-between w-full">
-              <div
-                onClick={() => {
-                  onNavChange("inbox");
-                  onAccountChange("all");
-                }}
-                className="flex items-center gap-2.5 cursor-pointer group/brand min-w-0"
-                title="Mailr Unified Home"
-              >
-                <div className="h-9 w-9 p-0 flex items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-md group-hover/brand:from-sky-500 group-hover/brand:to-indigo-500 shrink-0 transition-transform active:scale-95">
-                  <Mail className="h-4.5 w-4.5" />
-                </div>
-                {isExpanded && (
-                  <div className="flex flex-col min-w-0 transition-opacity duration-200">
-                    <span className="font-bold text-sm text-foreground tracking-tight leading-none">Mailr</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5 leading-none">Client &amp; Agent</span>
-                  </div>
-                )}
+          <div className="h-14 px-2 border-b border-border/40 flex items-center justify-between shrink-0 overflow-hidden">
+            <div
+              onClick={() => {
+                onNavChange("inbox");
+                onAccountChange("all");
+              }}
+              className="flex items-center gap-2.5 cursor-pointer group/brand min-w-0"
+              title="Mailr Unified Home"
+            >
+              <div className="h-9 w-9 p-0 flex items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-md group-hover/brand:from-sky-500 group-hover/brand:to-indigo-500 shrink-0 transition-transform active:scale-95 ml-0.5">
+                <Mail className="h-4.5 w-4.5" />
               </div>
-
-              {onToggleRail && (
-                <button
-                  type="button"
-                  onClick={onToggleRail}
-                  className={cn(
-                    "h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0",
-                    !isExpanded && "mt-1.5"
-                  )}
-                  title="Collapse sidebar ([ or Ctrl+B)"
-                >
-                  <PanelLeftClose className="h-3.5 w-3.5" />
-                </button>
-              )}
+              <div className={cn("flex flex-col min-w-0 whitespace-nowrap transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                <span className="font-bold text-sm text-foreground tracking-tight leading-none">Mailr</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5 leading-none">Client &amp; Agent</span>
+              </div>
             </div>
+
+            {onToggleRail && (
+              <button
+                type="button"
+                onClick={onToggleRail}
+                className={cn(
+                  "h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0 ml-auto mr-1",
+                  isExpanded ? "opacity-100" : "opacity-0 pointer-events-none"
+                )}
+                title="Collapse sidebar ([ or Ctrl+B)"
+              >
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Middle: Compose + Folders + Inboxes */}
-          <div className="flex-1 py-2 overflow-y-auto overflow-x-hidden p-1 space-y-2">
+          <div className="flex-1 py-2 overflow-y-auto overflow-x-hidden px-2 space-y-1.5">
             {/* 1. Primary Compose Action */}
-            <div className="px-1">
-              <button
-                type="button"
-                onClick={onOpenCompose}
-                className={cn(
-                  "rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-all active:scale-95 cursor-pointer flex items-center",
-                  isExpanded
-                    ? "w-full h-9 px-3 gap-2.5 text-xs font-medium"
-                    : "h-9 w-9 p-0 justify-center mx-auto"
-                )}
-                title="Compose Email (C)"
-              >
-                <Plus className="h-4 w-4 stroke-[2.5] shrink-0" />
-                {isExpanded && (
-                  <>
-                    <span className="truncate flex-1 text-left">New Message</span>
-                    <kbd className="text-[10px] bg-primary-foreground/20 px-1.5 py-0.5 rounded font-mono">C</kbd>
-                  </>
-                )}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onOpenCompose}
+              className="w-full h-9 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm active:scale-95 cursor-pointer flex items-center px-2.5 gap-2.5 whitespace-nowrap overflow-hidden shrink-0"
+              title="Compose Email (C)"
+            >
+              <Plus className="h-4 w-4 stroke-[2.5] shrink-0 ml-0.5" />
+              <span className={cn("truncate flex-1 text-left text-xs font-medium transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                New Message
+              </span>
+              {isExpanded && (
+                <kbd className="text-[10px] bg-primary-foreground/20 px-1.5 py-0.5 rounded font-mono shrink-0">C</kbd>
+              )}
+            </button>
 
-            <div className={cn("border-t border-border/40 mx-auto", isExpanded ? "w-full my-2" : "w-6 my-1.5")} />
+            <div className="border-t border-border/40 mx-1 my-1 shrink-0" />
 
             {/* 2. Primary Navigation Folders */}
-            <div className="space-y-1 px-1">
+            <div className="space-y-0.5">
               {navItems.map((item) => {
                 const isActive = activeNav === item.id;
                 const Icon = item.icon;
@@ -386,10 +372,7 @@ export function MailSidebar({
                       type="button"
                       onClick={() => onNavChange(item.id as any)}
                       className={cn(
-                        "rounded-lg transition-all flex items-center cursor-pointer",
-                        isExpanded
-                          ? "w-full h-8 px-2.5 gap-2.5 text-xs text-left"
-                          : "h-8 w-8 p-0 justify-center mx-auto",
+                        "w-full h-8 rounded-lg flex items-center px-2.5 gap-2.5 whitespace-nowrap overflow-hidden transition-colors cursor-pointer shrink-0 text-left",
                         isActive
                           ? "bg-secondary text-foreground font-medium shadow-sm border border-border"
                           : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
@@ -398,20 +381,20 @@ export function MailSidebar({
                     >
                       <Icon
                         className={cn(
-                          "h-4 w-4 shrink-0",
+                          "h-4 w-4 shrink-0 ml-0.5",
                           item.id === "priority" && isActive && "text-emerald-400"
                         )}
                       />
-                      {isExpanded && (
-                        <span className="truncate flex-1 font-medium">{item.title}</span>
-                      )}
+                      <span className={cn("truncate flex-1 text-xs font-medium transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                        {item.title}
+                      </span>
 
                       {/* Unread badge indicator */}
                       {Boolean(item.badge && item.badge > 0) && (
                         isExpanded ? (
                           <span
                             className={cn(
-                              "px-1.5 py-0.2 rounded-full text-[10px] font-bold border shrink-0",
+                              "px-1.5 py-0.2 rounded-full text-[10px] font-bold border shrink-0 transition-opacity duration-150",
                               item.badgeColor || "bg-sky-500 text-white border-background"
                             )}
                           >
@@ -420,7 +403,7 @@ export function MailSidebar({
                         ) : (
                           <span
                             className={cn(
-                              "absolute top-0 right-1 h-3 min-w-3 px-1 rounded-full text-[9px] font-bold flex items-center justify-center border pointer-events-none",
+                              "absolute top-1 right-1.5 h-2.5 min-w-2.5 px-0.5 rounded-full text-[8px] font-bold flex items-center justify-center border pointer-events-none",
                               item.badgeColor || "bg-sky-500 text-white border-background"
                             )}
                           >
@@ -434,37 +417,28 @@ export function MailSidebar({
               })}
             </div>
 
-            <div className={cn("border-t border-border/40 mx-auto", isExpanded ? "w-full my-2" : "w-6 my-1.5")} />
+            <div className="border-t border-border/40 mx-1 my-1 shrink-0" />
 
             {/* 3. Connected Accounts Rail (Direct Account Switching) */}
-            <div className="flex flex-col gap-1.5 px-1 pt-0.5">
-              {isExpanded && (
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-0.5">
-                  Connected Inboxes
-                </div>
-              )}
-
+            <div className="space-y-0.5">
               {/* Unified Inbox Switcher */}
               <button
                 type="button"
                 onClick={() => onAccountChange("all")}
                 className={cn(
-                  "rounded-lg transition-all flex items-center cursor-pointer",
-                  isExpanded
-                    ? "w-full h-8 px-2.5 gap-2.5 text-xs text-left"
-                    : "h-8 w-8 p-0 justify-center mx-auto",
+                  "w-full h-8 rounded-lg flex items-center px-2.5 gap-2.5 whitespace-nowrap overflow-hidden transition-colors cursor-pointer shrink-0 text-left",
                   selectedAccountId === "all"
                     ? "bg-sky-500/20 text-sky-400 ring-2 ring-sky-500 font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
                 )}
                 title={isExpanded ? undefined : "All Connected Accounts (Unified)"}
               >
-                <Layers className="h-4 w-4 shrink-0 text-sky-400" />
+                <Layers className="h-4 w-4 shrink-0 text-sky-400 ml-0.5" />
+                <span className={cn("truncate flex-1 text-xs font-medium transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                  Unified Inbox
+                </span>
                 {isExpanded && (
-                  <>
-                    <span className="truncate flex-1 font-medium">Unified Inbox</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">{accounts.length}</span>
-                  </>
+                  <span className="text-[10px] text-muted-foreground font-mono shrink-0">{accounts.length}</span>
                 )}
               </button>
 
@@ -483,15 +457,10 @@ export function MailSidebar({
                     type="button"
                     onClick={() => onAccountChange(acc.id)}
                     className={cn(
-                      "rounded-lg transition-all flex items-center cursor-pointer relative",
-                      isExpanded
-                        ? "w-full h-8.5 px-2 gap-2 text-xs text-left hover:bg-secondary/40"
-                        : "h-8 w-8 p-0 justify-center mx-auto hover:scale-105",
+                      "w-full h-8.5 rounded-lg flex items-center px-2 gap-2 whitespace-nowrap overflow-hidden transition-colors cursor-pointer shrink-0 text-left relative",
                       isAccActive
-                        ? isExpanded
-                          ? "bg-secondary text-foreground font-medium ring-1 ring-border"
-                          : "ring-2 ring-white scale-105"
-                        : "opacity-80 hover:opacity-100"
+                        ? "bg-secondary text-foreground font-medium ring-1 ring-border"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
                     )}
                     title={isExpanded ? undefined : `${acc.displayName || acc.emailAddress} (${acc.provider})`}
                   >
@@ -504,21 +473,19 @@ export function MailSidebar({
                       {providerLetter}
                     </span>
 
-                    {isExpanded && (
-                      <div className="flex flex-col min-w-0 flex-1 truncate">
-                        <span className="truncate text-xs font-medium text-foreground">
-                          {acc.displayName || acc.emailAddress}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground truncate">
-                          {acc.emailAddress}
-                        </span>
-                      </div>
-                    )}
+                    <div className={cn("flex flex-col min-w-0 flex-1 truncate transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                      <span className="truncate text-xs font-medium text-foreground">
+                        {acc.displayName || acc.emailAddress}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {acc.emailAddress}
+                      </span>
+                    </div>
 
                     {isAccActive && (
                       <span className={cn(
                         "bg-sky-400 rounded-full shrink-0",
-                        isExpanded ? "h-1.5 w-1.5 ml-auto mr-1" : "absolute -left-1 top-2 bottom-2 w-0.5 rounded-r bg-white"
+                        isExpanded ? "h-1.5 w-1.5 ml-auto mr-0.5" : "absolute left-0.5 top-2 bottom-2 w-0.5 rounded-r bg-sky-400"
                       )} />
                     )}
                   </button>
@@ -529,37 +496,24 @@ export function MailSidebar({
               <button
                 type="button"
                 onClick={onOpenConnectModal}
-                className={cn(
-                  "rounded-lg border border-dashed border-border/80 hover:border-sky-400 text-muted-foreground hover:text-sky-400 transition-colors flex items-center cursor-pointer",
-                  isExpanded
-                    ? "w-full h-8 px-2.5 gap-2 text-xs font-medium"
-                    : "h-8 w-8 p-0 justify-center mx-auto"
-                )}
+                className="w-full h-8 rounded-lg border border-dashed border-border/80 hover:border-sky-400 text-muted-foreground hover:text-sky-400 transition-colors flex items-center px-2.5 gap-2.5 whitespace-nowrap overflow-hidden cursor-pointer shrink-0 text-left"
                 title="Add another email account"
               >
-                <Plus className="h-3.5 w-3.5 shrink-0" />
-                {isExpanded && (
-                  <span className="truncate">Add Account</span>
-                )}
+                <Plus className="h-3.5 w-3.5 shrink-0 ml-0.5" />
+                <span className={cn("truncate text-xs font-medium transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                  Add Account
+                </span>
               </button>
             </div>
           </div>
 
           {/* Bottom: Profile & Account Settings Menu */}
-          <div className={cn(
-            "border-t border-border/40 transition-all shrink-0",
-            isExpanded ? "p-2.5" : "p-2"
-          )}>
+          <div className="h-14 p-2 border-t border-border/40 flex items-center shrink-0 overflow-hidden">
             <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className={cn(
-                    "rounded-xl hover:bg-secondary transition-all flex items-center cursor-pointer",
-                    isExpanded
-                      ? "w-full h-11 px-2 gap-2.5 text-left"
-                      : "h-10 w-10 p-0 justify-center mx-auto relative"
-                  )}
+                  className="w-full h-10 rounded-xl hover:bg-secondary transition-colors flex items-center px-1 gap-2.5 cursor-pointer overflow-hidden text-left"
                   title={user?.name || "Account Menu"}
                 >
                   <div className="relative shrink-0">
@@ -571,19 +525,17 @@ export function MailSidebar({
                     <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-background" />
                   </div>
 
-                  {isExpanded && (
-                    <div className="flex flex-col min-w-0 flex-1 truncate text-left">
-                      <span className="text-xs font-semibold text-foreground truncate">
-                        {user?.name || "Mailr User"}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground truncate">
-                        {user?.email || "self-hosted"}
-                      </span>
-                    </div>
-                  )}
+                  <div className={cn("flex flex-col min-w-0 flex-1 truncate transition-opacity duration-150", isExpanded ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                    <span className="text-xs font-semibold text-foreground truncate">
+                      {user?.name || "Mailr User"}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground truncate">
+                      {user?.email || "self-hosted"}
+                    </span>
+                  </div>
 
                   {isExpanded && (
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0 ml-auto" />
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0 ml-auto mr-1" />
                   )}
                 </button>
               </DropdownMenuTrigger>
