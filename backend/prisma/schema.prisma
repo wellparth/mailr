@@ -52,6 +52,11 @@ model User {
   aiProvider         String?            @default("openai") @map("ai_provider")
   aiModel            String?            @default("nvidia/nemotron-3.5-bolt-e4b") @map("ai_model")
   encryptedAiKey     String?            @db.Text @map("encrypted_ai_key")
+  telegramBotToken   String?            @map("telegram_bot_token")
+  telegramChatId     String?            @map("telegram_chat_id")
+  discordWebhookUrl  String?            @db.Text @map("discord_webhook_url")
+  alertThreshold     String?            @default("URGENT") @map("alert_threshold")
+  alertsEnabled      Boolean            @default(false) @map("alerts_enabled")
   accounts           EmailAccount[]
   triageLogs         AITriageLog[]
   calendarProposals  CalendarProposal[]

@@ -6,6 +6,7 @@ import { ImapSmtpAdapter } from '../adapters/ImapSmtpAdapter.js';
 import { GmailAdapter } from '../adapters/GmailAdapter.js';
 import { OutlookAdapter } from '../adapters/OutlookAdapter.js';
 import { AIService } from './aiService.js';
+import { AlertNotificationService } from './alertNotificationService.js';
 import { NormalizedMessage, IEmailAdapter, SyncOptions } from '../adapters/EmailAdapter.js';
 import { ProviderType } from '@prisma/client';
 import { redis } from './redisClient.js';
@@ -306,6 +307,30 @@ export class SyncService {
             priorityScore: thread.priorityScore,
             receivedAt: msg.receivedAt,
           });
+
+          // Urgent Inbound Push Alerts: Dispatch to Telegram / Discord if configured
+          if (!isSentFolder && (thread.priorityLevel === 'URGENT' || thread.priorityLevel === 'HIGH')) {
+            AlertNotificationService.sendUrgentAlert(
+              account.userId,
+              {
+                id: thread.id,
+                subject: thread.subject,
+                priorityScore: thread.priorityScore,
+                priorityLevel: thread.priorityLevel,
+                priorityReason: thread.priorityReason,
+                snippet: thread.snippet,
+              },
+              {
+                id: created.id,
+                senderName: msg.senderName,
+                senderEmail: msg.senderEmail,
+                snippet: msg.snippet,
+                receivedAt: msg.receivedAt,
+              }
+            ).catch((alertErr) => {
+              console.warn('[SyncService] Urgent alert push notice:', alertErr);
+            });
+          }
 
           try {
             await redis.publish(`mailr:user:${account.userId}:emails`, {

@@ -6,6 +6,7 @@ import accountRoutes from './routes/accountRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
+import alertRoutes from './routes/alertRoutes.js';
 
 import { SyncService } from './services/syncService.js';
 import { ScheduledMailService } from './services/scheduledMailService.js';
@@ -62,6 +63,7 @@ app.use('/api/accounts', accountRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/alerts', alertRoutes);
 
 // Global Error Handler
 app.use((err: Error, _req: Request, res: Response, _next: express.NextFunction) => {

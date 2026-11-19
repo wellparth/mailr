@@ -28,6 +28,9 @@ import {
   Link as LinkIcon,
   RefreshCw,
   Database,
+  Bell,
+  Send,
+  MessageSquare,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -50,7 +53,22 @@ export function SettingsDialog({
   onOpenChange,
   accountsCount,
 }: SettingsDialogProps) {
-  const [activeTab, setActiveTab] = React.useState<"ai" | "calendar" | "security">("ai");
+  const [activeTab, setActiveTab] = React.useState<"ai" | "alerts" | "calendar" | "security">("ai");
+
+  // Urgent Inbound Alerts State
+  const [alertsEnabled, setAlertsEnabled] = React.useState(false);
+  const [alertThreshold, setAlertThreshold] = React.useState<"URGENT" | "HIGH">("URGENT");
+  const [telegramBotToken, setTelegramBotToken] = React.useState("");
+  const [telegramChatId, setTelegramChatId] = React.useState("");
+  const [hasTelegramToken, setHasTelegramToken] = React.useState(false);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = React.useState("");
+  const [hasDiscordWebhook, setHasDiscordWebhook] = React.useState(false);
+  const [discordMasked, setDiscordMasked] = React.useState<string | null>(null);
+  const [savingAlerts, setSavingAlerts] = React.useState(false);
+  const [testingTelegram, setTestingTelegram] = React.useState(false);
+  const [testingDiscord, setTestingDiscord] = React.useState(false);
+  const [telegramTestResult, setTelegramTestResult] = React.useState<{ success: boolean; message: string } | null>(null);
+  const [discordTestResult, setDiscordTestResult] = React.useState<{ success: boolean; message: string } | null>(null);
 
   // AI & BYOK State
   const [aiProvider, setAiProvider] = React.useState<"openai" | "claude" | "google" | "nvidia">("nvidia");
@@ -137,6 +155,20 @@ export function SettingsDialog({
       apiFetch("/api/agent/redis/status")
         .then((res) => {
           if (res) setRedisStatus(res);
+        })
+        .catch(() => {});
+
+      // 4. Load Urgent Alert Settings
+      apiFetch("/api/alerts/config")
+        .then((res: any) => {
+          if (res) {
+            setAlertsEnabled(Boolean(res.alertsEnabled));
+            setAlertThreshold(res.alertThreshold || "URGENT");
+            setTelegramChatId(res.telegramChatId || "");
+            setHasTelegramToken(Boolean(res.hasTelegramToken));
+            setHasDiscordWebhook(Boolean(res.hasDiscordWebhook));
+            setDiscordMasked(res.discordWebhookUrlMasked || null);
+          }
         })
         .catch(() => {});
 
@@ -230,6 +262,73 @@ export function SettingsDialog({
     }
   };
 
+  const handleSaveAlerts = async () => {
+    try {
+      setSavingAlerts(true);
+      const res: any = await apiFetch("/api/alerts/config", {
+        method: "POST",
+        body: JSON.stringify({
+          alertsEnabled,
+          alertThreshold,
+          telegramBotToken: telegramBotToken || undefined,
+          telegramChatId,
+          discordWebhookUrl: discordWebhookUrl || undefined,
+        }),
+      });
+
+      if (res && res.success) {
+        setHasTelegramToken(Boolean(res.hasTelegramToken));
+        setHasDiscordWebhook(Boolean(res.hasDiscordWebhook));
+        if (telegramBotToken) setTelegramBotToken("");
+        if (discordWebhookUrl) setDiscordWebhookUrl("");
+        showToast("Urgent alert preferences saved successfully!");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to save alert settings");
+    } finally {
+      setSavingAlerts(false);
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    try {
+      setTestingTelegram(true);
+      setTelegramTestResult(null);
+      const res = await apiFetch<{ success: boolean; message: string }>("/api/alerts/test", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "telegram",
+          telegramBotToken: telegramBotToken || undefined,
+          telegramChatId: telegramChatId || undefined,
+        }),
+      });
+      setTelegramTestResult(res);
+    } catch (err: any) {
+      setTelegramTestResult({ success: false, message: err.message || "Test failed" });
+    } finally {
+      setTestingTelegram(false);
+    }
+  };
+
+  const handleTestDiscord = async () => {
+    try {
+      setTestingDiscord(true);
+      setDiscordTestResult(null);
+      const res = await apiFetch<{ success: boolean; message: string }>("/api/alerts/test", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "discord",
+          discordWebhookUrl: discordWebhookUrl || undefined,
+        }),
+      });
+      setDiscordTestResult(res);
+    } catch (err: any) {
+      setDiscordTestResult({ success: false, message: err.message || "Test failed" });
+    } finally {
+      setTestingDiscord(false);
+    }
+  };
+
   const providers = [
     {
       id: "nvidia",
@@ -293,6 +392,21 @@ export function SettingsDialog({
               <Bot className="h-3.5 w-3.5" />
               <span>AI Model & BYOK</span>
               {hasCustomKey && (
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab("alerts")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                activeTab === "alerts"
+                  ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+              }`}
+            >
+              <Bell className="h-3.5 w-3.5" />
+              <span>Urgent Alerts</span>
+              {alertsEnabled && (
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
               )}
             </button>
@@ -539,6 +653,212 @@ export function SettingsDialog({
                   className="text-xs h-8 gap-1.5 bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
                 >
                   <span>{savingAI ? "Saving..." : "Save AI Settings"}</span>
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: URGENT ALERTS (TELEGRAM & DISCORD) */}
+          {activeTab === "alerts" && (
+            <div className="space-y-4">
+              {/* Header Card */}
+              <div className="bg-secondary/30 p-3.5 rounded-xl border border-border/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-foreground flex items-center gap-1.5 text-xs">
+                    <Bell className="h-4 w-4 text-amber-400" />
+                    Inbound Urgent Push Notifications
+                  </span>
+                  <label className="flex items-center gap-2 cursor-pointer bg-card/60 px-2.5 py-1 rounded-lg border border-border/60">
+                    <span className="text-[11px] font-medium text-foreground">Alerts Active</span>
+                    <input
+                      type="checkbox"
+                      checked={alertsEnabled}
+                      onChange={(e) => setAlertsEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-border text-sky-600 focus:ring-sky-500 cursor-pointer accent-sky-600"
+                    />
+                  </label>
+                </div>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  Mailr runs 24/7 on your server. When incoming emails are classified as Urgent by the AI scoring engine, get alerted on Telegram or Discord instantly with deep links back to the thread.
+                </p>
+              </div>
+
+              {/* Priority Threshold Selector */}
+              <div className="p-3.5 rounded-xl bg-secondary/20 border border-border/60 space-y-2">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <span>Notification Threshold</span>
+                </Label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAlertThreshold("URGENT")}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      alertThreshold === "URGENT"
+                        ? "bg-red-500/10 border-red-500/40 text-red-400 font-medium"
+                        : "bg-secondary/30 border-border/60 text-muted-foreground hover:bg-secondary/60"
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <span>🚨 Urgent Only</span>
+                      {alertThreshold === "URGENT" && <CheckCircle2 className="h-3 w-3 ml-auto text-red-400" />}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Server outages, emergencies, urgent escalation requests.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAlertThreshold("HIGH")}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      alertThreshold === "HIGH"
+                        ? "bg-amber-500/10 border-amber-500/40 text-amber-400 font-medium"
+                        : "bg-secondary/30 border-border/60 text-muted-foreground hover:bg-secondary/60"
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <span>⚡ Urgent + High</span>
+                      {alertThreshold === "HIGH" && <CheckCircle2 className="h-3 w-3 ml-auto text-amber-400" />}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Includes client proposals, VIP inquiries, and time-sensitive threads.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Telegram Bot Section */}
+              <div className="p-3.5 rounded-xl bg-secondary/20 border border-border/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-400">
+                      <Send className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground flex items-center gap-2 text-xs">
+                        <span>Telegram Bot Integration</span>
+                        {hasTelegramToken && (
+                          <Badge variant="outline" className="text-[9px] text-emerald-400 border-emerald-500/30">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Receive push messages on private Telegram chats or channels.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Telegram Bot Token</Label>
+                    <Input
+                      type="password"
+                      value={telegramBotToken}
+                      onChange={(e) => setTelegramBotToken(e.target.value)}
+                      placeholder={hasTelegramToken ? "•••••••••••• (Leave blank to keep current)" : "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"}
+                      className="h-8 text-xs bg-secondary/40 border-border font-mono"
+                    />
+                    <p className="text-[9px] text-muted-foreground">Obtain from @BotFather on Telegram</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Telegram Chat ID</Label>
+                    <Input
+                      type="text"
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      placeholder="e.g. 123456789 or -1001234567890"
+                      className="h-8 text-xs bg-secondary/40 border-border font-mono"
+                    />
+                    <p className="text-[9px] text-muted-foreground">Find via @userinfobot or message updates</p>
+                  </div>
+                </div>
+
+                {telegramTestResult && (
+                  <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${telegramTestResult.success ? "bg-emerald-950/60 text-emerald-300 border border-emerald-500/30" : "bg-red-950/60 text-red-300 border border-red-500/30"}`}>
+                    {telegramTestResult.success ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400" />}
+                    <span>{telegramTestResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestTelegram}
+                    disabled={testingTelegram || (!telegramBotToken && !hasTelegramToken) || !telegramChatId}
+                    className="text-xs h-7 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                  >
+                    <span>{testingTelegram ? "Testing..." : "Test Telegram Ping"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Discord Webhook Section */}
+              <div className="p-3.5 rounded-xl bg-secondary/20 border border-border/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-indigo-500/15 text-indigo-400">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground flex items-center gap-2 text-xs">
+                        <span>Discord Channel Webhook</span>
+                        {hasDiscordWebhook && (
+                          <Badge variant="outline" className="text-[9px] text-emerald-400 border-emerald-500/30">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Post rich embeds to your private Discord server channel.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">Discord Webhook URL</Label>
+                  <Input
+                    type="password"
+                    value={discordWebhookUrl}
+                    onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+                    placeholder={hasDiscordWebhook ? (discordMasked || "•••••••••••• (Leave blank to keep)") : "https://discord.com/api/webhooks/..."}
+                    className="h-8 text-xs bg-secondary/40 border-border font-mono"
+                  />
+                  <p className="text-[9px] text-muted-foreground">Created in Discord Server Settings &gt; Integrations &gt; Webhooks</p>
+                </div>
+
+                {discordTestResult && (
+                  <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${discordTestResult.success ? "bg-emerald-950/60 text-emerald-300 border border-emerald-500/30" : "bg-red-950/60 text-red-300 border border-red-500/30"}`}>
+                    {discordTestResult.success ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400" />}
+                    <span>{discordTestResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestDiscord}
+                    disabled={testingDiscord || (!discordWebhookUrl && !hasDiscordWebhook)}
+                    className="text-xs h-7 gap-1.5 border-border hover:bg-secondary cursor-pointer"
+                  >
+                    <span>{testingDiscord ? "Testing..." : "Test Discord Ping"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end pt-2 border-t border-border/50">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSaveAlerts}
+                  disabled={savingAlerts}
+                  className="text-xs h-8 gap-1.5 bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
+                >
+                  <span>{savingAlerts ? "Saving..." : "Save Alert Settings"}</span>
                 </Button>
               </div>
             </div>
