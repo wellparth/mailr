@@ -20,6 +20,7 @@ import {
   Settings,
   Mail,
   ChevronDown,
+  ChevronRight,
   CheckCircle2,
   Layers,
   Image as ImageIcon,
@@ -269,6 +270,11 @@ export function MailSidebar({
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
 
+  // Expanding primary rail state on hover
+  const [isRailHovered, setIsRailHovered] = React.useState(false);
+  const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const isExpanded = isRailHovered || userMenuOpen;
+
   return (
     <Sidebar
       collapsible="icon"
@@ -278,245 +284,359 @@ export function MailSidebar({
       )}
     >
       {/* =========================================
-          PRIMARY RAIL SIDEBAR (56px)
-          Designed with strong purposeful workflows:
-          - Brand Home
-          - Collapse Toggle Action
-          - Compose Action
-          - Connected Inboxes Rail (Direct 1-click switch & Add)
-          - Core Folders
-          - Profile & Account Status
+          PRIMARY RAIL SIDEBAR (56px -> 220px on hover)
+          - 56px compact icon rail by default
+          - Smoothly grows to the right on hover to 220px
+          - Reveals full names, badges, inboxes, and profile
           ========================================= */}
-      <Sidebar
-        collapsible="none"
+      <div
         className={cn(
-          "border-r border-border bg-card/60 flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out",
-          isRailCollapsed
-            ? "!w-0 opacity-0 overflow-hidden border-r-0 p-0 pointer-events-none"
-            : "!w-[56px] opacity-100"
+          "relative shrink-0 transition-all duration-200 ease-in-out",
+          isRailCollapsed ? "w-0 overflow-hidden" : "w-[56px]"
         )}
       >
-        {/* Top: Brand Monogram + Collapse Rail Button */}
-        <SidebarHeader className="p-2 border-b border-border/40 flex flex-col items-center gap-1.5">
-          <SidebarMenu>
-            <SidebarMenuItem className="flex flex-col items-center gap-1.5">
-              <SidebarMenuButton
-                size="lg"
+        <div
+          onMouseEnter={() => setIsRailHovered(true)}
+          onMouseLeave={() => setIsRailHovered(false)}
+          className={cn(
+            "absolute left-0 top-0 bottom-0 z-40 border-r border-border bg-card/95 backdrop-blur-md flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out select-none",
+            isRailCollapsed
+              ? "!w-0 opacity-0 overflow-hidden border-r-0 p-0 pointer-events-none"
+              : isExpanded
+              ? "!w-[220px] opacity-100 shadow-2xl ring-1 ring-border/50"
+              : "!w-[56px] opacity-100 shadow-none overflow-hidden"
+          )}
+        >
+          {/* Top: Brand Monogram + Title + Collapse Rail Button */}
+          <div className={cn(
+            "p-2 border-b border-border/40 transition-all shrink-0",
+            isExpanded ? "px-3 py-2.5" : "flex flex-col items-center gap-1.5"
+          )}>
+            <div className="flex items-center justify-between w-full">
+              <div
                 onClick={() => {
                   onNavChange("inbox");
                   onAccountChange("all");
                 }}
-                className="h-10 w-10 p-0 flex items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-md hover:from-sky-500 hover:to-indigo-500 mx-auto cursor-pointer"
-                tooltip="Mailr Unified Home"
+                className="flex items-center gap-2.5 cursor-pointer group/brand min-w-0"
+                title="Mailr Unified Home"
               >
-                <Mail className="h-5 w-5" />
-              </SidebarMenuButton>
+                <div className="h-9 w-9 p-0 flex items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-md group-hover/brand:from-sky-500 group-hover/brand:to-indigo-500 shrink-0 transition-transform active:scale-95">
+                  <Mail className="h-4.5 w-4.5" />
+                </div>
+                {isExpanded && (
+                  <div className="flex flex-col min-w-0 transition-opacity duration-200">
+                    <span className="font-bold text-sm text-foreground tracking-tight leading-none">Mailr</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 leading-none">Client &amp; Agent</span>
+                  </div>
+                )}
+              </div>
 
-              {/* Collapse Rail Button */}
               {onToggleRail && (
                 <button
                   type="button"
                   onClick={onToggleRail}
-                  className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
+                  className={cn(
+                    "h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0",
+                    !isExpanded && "mt-1.5"
+                  )}
                   title="Collapse sidebar ([ or Ctrl+B)"
                 >
                   <PanelLeftClose className="h-3.5 w-3.5" />
                 </button>
               )}
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
+            </div>
+          </div>
 
-        {/* Middle: Compose + Folders + Connected Inboxes Icons */}
-        <SidebarContent className="py-2 overflow-y-auto">
-          <SidebarGroup className="p-1">
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-2">
-                {/* 1. Primary Compose Action */}
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={onOpenCompose}
-                    className="h-10 w-10 p-0 flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 mx-auto shadow-sm transition-transform active:scale-95"
-                    tooltip="Compose Email (Attach images & docs)"
-                  >
-                    <Plus className="h-4 w-4 stroke-[2.5]" />
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+          {/* Middle: Compose + Folders + Inboxes */}
+          <div className="flex-1 py-2 overflow-y-auto overflow-x-hidden p-1 space-y-2">
+            {/* 1. Primary Compose Action */}
+            <div className="px-1">
+              <button
+                type="button"
+                onClick={onOpenCompose}
+                className={cn(
+                  "rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-all active:scale-95 cursor-pointer flex items-center",
+                  isExpanded
+                    ? "w-full h-9 px-3 gap-2.5 text-xs font-medium"
+                    : "h-9 w-9 p-0 justify-center mx-auto"
+                )}
+                title="Compose Email (C)"
+              >
+                <Plus className="h-4 w-4 stroke-[2.5] shrink-0" />
+                {isExpanded && (
+                  <>
+                    <span className="truncate flex-1 text-left">New Message</span>
+                    <kbd className="text-[10px] bg-primary-foreground/20 px-1.5 py-0.5 rounded font-mono">C</kbd>
+                  </>
+                )}
+              </button>
+            </div>
 
-                <div className="my-1.5 border-t border-border/40 w-6 mx-auto" />
+            <div className={cn("border-t border-border/40 mx-auto", isExpanded ? "w-full my-2" : "w-6 my-1.5")} />
 
-                {/* 2. Primary Navigation Folders */}
-                {navItems.map((item) => {
-                  const isActive = activeNav === item.id;
-                  const Icon = item.icon;
-                  return (
-                    <SidebarMenuItem key={item.id} className="relative">
-                      <SidebarMenuButton
-                        onClick={() => onNavChange(item.id as any)}
-                        isActive={isActive}
-                        className={`h-9 w-9 p-0 flex items-center justify-center rounded-lg mx-auto transition-all ${
-                          isActive
-                            ? "bg-secondary text-foreground font-medium shadow-sm border border-border"
-                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
-                        }`}
-                        tooltip={`${item.title} ${item.badge ? `(${item.badge})` : ""}`}
-                      >
-                        <Icon
-                          className={`h-4 w-4 ${
-                            item.id === "priority" && isActive
-                              ? "text-emerald-400"
-                              : ""
-                          }`}
-                        />
-                      </SidebarMenuButton>
+            {/* 2. Primary Navigation Folders */}
+            <div className="space-y-1 px-1">
+              {navItems.map((item) => {
+                const isActive = activeNav === item.id;
+                const Icon = item.icon;
+                return (
+                  <div key={item.id} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => onNavChange(item.id as any)}
+                      className={cn(
+                        "rounded-lg transition-all flex items-center cursor-pointer",
+                        isExpanded
+                          ? "w-full h-8 px-2.5 gap-2.5 text-xs text-left"
+                          : "h-8 w-8 p-0 justify-center mx-auto",
+                        isActive
+                          ? "bg-secondary text-foreground font-medium shadow-sm border border-border"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+                      )}
+                      title={isExpanded ? undefined : `${item.title} ${item.badge ? `(${item.badge})` : ""}`}
+                    >
+                      <Icon
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          item.id === "priority" && isActive && "text-emerald-400"
+                        )}
+                      />
+                      {isExpanded && (
+                        <span className="truncate flex-1 font-medium">{item.title}</span>
+                      )}
 
                       {/* Unread badge indicator */}
                       {Boolean(item.badge && item.badge > 0) && (
-                        <span
-                          className={`absolute top-0 right-1 h-3 min-w-3 px-1 rounded-full text-[9px] font-bold flex items-center justify-center border pointer-events-none ${
-                            item.badgeColor || "bg-sky-500 text-white border-background"
-                          }`}
-                        >
-                          {item.badge}
-                        </span>
+                        isExpanded ? (
+                          <span
+                            className={cn(
+                              "px-1.5 py-0.2 rounded-full text-[10px] font-bold border shrink-0",
+                              item.badgeColor || "bg-sky-500 text-white border-background"
+                            )}
+                          >
+                            {item.badge}
+                          </span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "absolute top-0 right-1 h-3 min-w-3 px-1 rounded-full text-[9px] font-bold flex items-center justify-center border pointer-events-none",
+                              item.badgeColor || "bg-sky-500 text-white border-background"
+                            )}
+                          >
+                            {item.badge}
+                          </span>
+                        )
                       )}
-                    </SidebarMenuItem>
-                  );
-                })}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
 
-                <div className="my-1.5 border-t border-border/40 w-6 mx-auto" />
+            <div className={cn("border-t border-border/40 mx-auto", isExpanded ? "w-full my-2" : "w-6 my-1.5")} />
 
-                {/* 3. Connected Accounts Rail Icons (Direct Account Switching) */}
-                <div className="flex flex-col items-center gap-1.5 pt-1">
-                  {/* Unified Inbox Switcher Icon */}
-                  <button
-                    onClick={() => onAccountChange("all")}
-                    className={`h-8 w-8 rounded-lg flex items-center justify-center transition-all ${
-                      selectedAccountId === "all"
-                        ? "bg-sky-500/20 text-sky-400 ring-2 ring-sky-500"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                    }`}
-                    title="All Connected Accounts (Unified)"
-                  >
-                    <Layers className="h-4 w-4" />
-                  </button>
-
-                  {/* Individual Inboxes */}
-                  {accounts.map((acc) => {
-                    const isAccActive = selectedAccountId === acc.id;
-                    const providerLetter =
-                      acc.provider === "GMAIL"
-                        ? "G"
-                        : acc.provider === "OUTLOOK"
-                        ? "O"
-                        : "M";
-                    return (
-                      <button
-                        key={acc.id}
-                        onClick={() => onAccountChange(acc.id)}
-                        className={`relative h-8 w-8 rounded-lg flex items-center justify-center font-bold text-xs transition-all ${
-                          isAccActive
-                            ? "ring-2 ring-white scale-105"
-                            : "opacity-75 hover:opacity-100 hover:scale-105"
-                        }`}
-                        style={{
-                          backgroundColor: acc.colorCode || "#2563eb",
-                          color: "#ffffff",
-                        }}
-                        title={`${acc.displayName || acc.emailAddress} (${acc.provider})`}
-                      >
-                        {providerLetter}
-                        {isAccActive && (
-                          <span className="absolute -left-1 top-2 bottom-2 w-0.5 bg-white rounded-r" />
-                        )}
-                      </button>
-                    );
-                  })}
-
-                  {/* Quick Add Another Account Rail Button */}
-                  <button
-                    onClick={onOpenConnectModal}
-                    className="h-8 w-8 rounded-lg border border-dashed border-border/80 hover:border-sky-400 text-muted-foreground hover:text-sky-400 flex items-center justify-center transition-colors"
-                    title="Add another email account"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
+            {/* 3. Connected Accounts Rail (Direct Account Switching) */}
+            <div className="flex flex-col gap-1.5 px-1 pt-0.5">
+              {isExpanded && (
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-0.5">
+                  Connected Inboxes
                 </div>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
+              )}
 
-        {/* Bottom: Profile & Account Settings Menu */}
-        <SidebarFooter className="p-2 border-t border-border/40">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton
-                    size="lg"
-                    className="h-10 w-10 p-0 flex items-center justify-center rounded-xl hover:bg-secondary mx-auto relative cursor-pointer"
-                    tooltip={user?.name || "Account Menu"}
+              {/* Unified Inbox Switcher */}
+              <button
+                type="button"
+                onClick={() => onAccountChange("all")}
+                className={cn(
+                  "rounded-lg transition-all flex items-center cursor-pointer",
+                  isExpanded
+                    ? "w-full h-8 px-2.5 gap-2.5 text-xs text-left"
+                    : "h-8 w-8 p-0 justify-center mx-auto",
+                  selectedAccountId === "all"
+                    ? "bg-sky-500/20 text-sky-400 ring-2 ring-sky-500 font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                )}
+                title={isExpanded ? undefined : "All Connected Accounts (Unified)"}
+              >
+                <Layers className="h-4 w-4 shrink-0 text-sky-400" />
+                {isExpanded && (
+                  <>
+                    <span className="truncate flex-1 font-medium">Unified Inbox</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">{accounts.length}</span>
+                  </>
+                )}
+              </button>
+
+              {/* Individual Inboxes */}
+              {accounts.map((acc) => {
+                const isAccActive = selectedAccountId === acc.id;
+                const providerLetter =
+                  acc.provider === "GMAIL"
+                    ? "G"
+                    : acc.provider === "OUTLOOK"
+                    ? "O"
+                    : "M";
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => onAccountChange(acc.id)}
+                    className={cn(
+                      "rounded-lg transition-all flex items-center cursor-pointer relative",
+                      isExpanded
+                        ? "w-full h-8.5 px-2 gap-2 text-xs text-left hover:bg-secondary/40"
+                        : "h-8 w-8 p-0 justify-center mx-auto hover:scale-105",
+                      isAccActive
+                        ? isExpanded
+                          ? "bg-secondary text-foreground font-medium ring-1 ring-border"
+                          : "ring-2 ring-white scale-105"
+                        : "opacity-80 hover:opacity-100"
+                    )}
+                    title={isExpanded ? undefined : `${acc.displayName || acc.emailAddress} (${acc.provider})`}
                   >
+                    <span
+                      className="h-6 w-6 rounded-md flex items-center justify-center font-bold text-[11px] shrink-0 text-white shadow-xs"
+                      style={{
+                        backgroundColor: acc.colorCode || "#2563eb",
+                      }}
+                    >
+                      {providerLetter}
+                    </span>
+
+                    {isExpanded && (
+                      <div className="flex flex-col min-w-0 flex-1 truncate">
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {acc.displayName || acc.emailAddress}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          {acc.emailAddress}
+                        </span>
+                      </div>
+                    )}
+
+                    {isAccActive && (
+                      <span className={cn(
+                        "bg-sky-400 rounded-full shrink-0",
+                        isExpanded ? "h-1.5 w-1.5 ml-auto mr-1" : "absolute -left-1 top-2 bottom-2 w-0.5 rounded-r bg-white"
+                      )} />
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* Quick Add Another Account */}
+              <button
+                type="button"
+                onClick={onOpenConnectModal}
+                className={cn(
+                  "rounded-lg border border-dashed border-border/80 hover:border-sky-400 text-muted-foreground hover:text-sky-400 transition-colors flex items-center cursor-pointer",
+                  isExpanded
+                    ? "w-full h-8 px-2.5 gap-2 text-xs font-medium"
+                    : "h-8 w-8 p-0 justify-center mx-auto"
+                )}
+                title="Add another email account"
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" />
+                {isExpanded && (
+                  <span className="truncate">Add Account</span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Bottom: Profile & Account Settings Menu */}
+          <div className={cn(
+            "border-t border-border/40 transition-all shrink-0",
+            isExpanded ? "p-2.5" : "p-2"
+          )}>
+            <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-xl hover:bg-secondary transition-all flex items-center cursor-pointer",
+                    isExpanded
+                      ? "w-full h-11 px-2 gap-2.5 text-left"
+                      : "h-10 w-10 p-0 justify-center mx-auto relative"
+                  )}
+                  title={user?.name || "Account Menu"}
+                >
+                  <div className="relative shrink-0">
                     <Avatar className="h-8 w-8 rounded-lg border border-border">
-                      <AvatarFallback className="text-xs font-semibold bg-secondary text-foreground">
+                      <AvatarFallback className="rounded-lg text-xs font-semibold bg-secondary text-foreground">
                         {getInitials(user?.name || user?.email || "U")}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="absolute bottom-1 right-1 h-2 w-2 rounded-full bg-emerald-500 border border-background" />
-                  </SidebarMenuButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  side="right"
-                  align="end"
-                  className="w-56 bg-card border-border shadow-2xl rounded-xl p-1 text-sm"
-                >
-                  <DropdownMenuLabel className="font-normal px-2 py-1.5">
-                    <div className="flex flex-col space-y-0.5">
-                      <p className="text-sm font-medium leading-none text-foreground">
+                    <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-background" />
+                  </div>
+
+                  {isExpanded && (
+                    <div className="flex flex-col min-w-0 flex-1 truncate text-left">
+                      <span className="text-xs font-semibold text-foreground truncate">
                         {user?.name || "Mailr User"}
-                      </p>
-                      <p className="text-xs leading-none text-muted-foreground truncate mt-1">
-                        {user?.email}
-                      </p>
+                      </span>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {user?.email || "self-hosted"}
+                      </span>
                     </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator className="bg-border/60 my-1" />
-                  <DropdownMenuItem
-                    onClick={onOpenConnectModal}
-                    className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
-                  >
-                    <Server className="h-4 w-4 text-sky-400" />
-                    <span>Connect New Email</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={onOpenCompose}
-                    className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
-                  >
-                    <ImageIcon className="h-4 w-4 text-emerald-400" />
-                    <span>New Email with Images</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={onOpenSettings}
-                    className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
-                  >
-                    <Settings className="h-4 w-4 text-muted-foreground" />
-                    <span>Security & Keys</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="bg-border/60 my-1" />
-                  <DropdownMenuItem
-                    onClick={onLogout}
-                    className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg text-rose-400 hover:bg-rose-500/10 focus:bg-rose-500/10"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    <span>Sign Out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      </Sidebar>
+                  )}
+
+                  {isExpanded && (
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0 ml-auto" />
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="right"
+                align="end"
+                className="w-56 bg-card border-border shadow-2xl rounded-xl p-1 text-sm z-50"
+              >
+                <DropdownMenuLabel className="font-normal px-2 py-1.5">
+                  <div className="flex flex-col space-y-0.5">
+                    <p className="text-sm font-medium leading-none text-foreground">
+                      {user?.name || "Mailr User"}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground truncate mt-1">
+                      {user?.email}
+                    </p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-border/60 my-1" />
+                <DropdownMenuItem
+                  onClick={onOpenConnectModal}
+                  className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
+                >
+                  <Server className="h-4 w-4 text-sky-400" />
+                  <span>Connect New Email</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={onOpenCompose}
+                  className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
+                >
+                  <ImageIcon className="h-4 w-4 text-emerald-400" />
+                  <span>New Email with Images</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={onOpenSettings}
+                  className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg hover:bg-secondary"
+                >
+                  <Settings className="h-4 w-4 text-muted-foreground" />
+                  <span>Security &amp; Keys</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border/60 my-1" />
+                <DropdownMenuItem
+                  onClick={onLogout}
+                  className="cursor-pointer gap-2 py-2 px-2.5 rounded-lg text-rose-400 hover:bg-rose-500/10 focus:bg-rose-500/10"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Sign Out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </div>
 
       {/* =========================================
           SECONDARY DRAWER SIDEBAR (320px)
