@@ -949,6 +949,9 @@ export default function AppMailPage() {
         onOpenBriefing={() => setIsBriefingOpen(true)}
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
         onOpenCleanup={() => setIsCleanupOpen(true)}
+        onArchiveThread={handleArchive}
+        onDeleteThread={handleDelete}
+        onStarToggleThread={handleStarToggle}
         isRailCollapsed={isRailCollapsed}
         onToggleRail={handleToggleRail}
         mailListWidth={mailListWidth}

@@ -13,6 +13,7 @@ import {
   Send,
   FileText,
   Trash2,
+  Archive,
   Plus,
   Search,
   Server,
@@ -33,6 +34,7 @@ import {
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api";
 
 import {
   Sidebar,
@@ -116,6 +118,9 @@ interface MailSidebarProps {
   onOpenBriefing?: () => void;
   onOpenShortcuts?: () => void;
   onOpenCleanup?: () => void;
+  onArchiveThread?: (threadId: string) => void;
+  onDeleteThread?: (threadId: string) => void;
+  onStarToggleThread?: (threadId: string, current: boolean) => void;
   selectedAccountId: string;
   onAccountChange: (accountId: string) => void;
   unreadOnly: boolean;
@@ -152,6 +157,9 @@ export function MailSidebar({
   activeNav,
   onNavChange,
   onOpenCleanup,
+  onArchiveThread,
+  onDeleteThread,
+  onStarToggleThread,
   selectedAccountId,
   onAccountChange,
   unreadOnly,
@@ -244,6 +252,60 @@ export function MailSidebar({
         !t.messages[0].isRead
     ).length;
   }, [threads]);
+
+  // Per-account unread count mapping for Segmented Multi-Account Tabs
+  const accountUnreadCounts = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    threads.forEach((t) => {
+      const isUnread = t.messages[0] && !t.messages[0].isRead;
+      if (isUnread && t.accountId) {
+        map[t.accountId] = (map[t.accountId] || 0) + 1;
+      }
+    });
+    return map;
+  }, [threads]);
+
+  // AI Inbox Health metrics & cleanup summary
+  const aiHealthStats = React.useMemo(() => {
+    let promoCount = 0;
+    let noReplyCount = 0;
+    let actionCount = 0;
+    threads.forEach((t) => {
+      if (t.aiCategory === "PROMOTIONAL") promoCount++;
+      if (t.aiCategory === "AUTOMATED_NO_REPLY") noReplyCount++;
+      if (t.aiCategory === "ACTION_REQUIRED") actionCount++;
+    });
+    const total = threads.length;
+    if (total === 0) return null;
+    const score = Math.max(45, Math.min(100, Math.round(100 - (promoCount * 2 + noReplyCount * 1.5))));
+    return { promoCount, noReplyCount, actionCount, score };
+  }, [threads]);
+
+  const [batchCleaning, setBatchCleaning] = React.useState(false);
+  const [cleanNotice, setCleanNotice] = React.useState<string | null>(null);
+
+  const handleBatchCleanQuick = async (category: string, action: "archive" | "trash") => {
+    try {
+      setBatchCleaning(true);
+      const res = await apiFetch<any>("/api/agent/emails/batch-clean", {
+        method: "POST",
+        body: JSON.stringify({
+          category,
+          action,
+          accountId: selectedAccountId !== "all" ? selectedAccountId : undefined,
+        }),
+      });
+      if (res && res.success) {
+        setCleanNotice(`Cleaned ${res.count} ${category} emails`);
+        setTimeout(() => setCleanNotice(null), 3500);
+        onSyncNow?.();
+      }
+    } catch (err: any) {
+      alert("Clean failed: " + (err.message || "Unknown error"));
+    } finally {
+      setBatchCleaning(false);
+    }
+  };
 
   const navItems = [
     { title: "Inbox", id: "inbox", icon: Inbox, badge: unreadCount },
@@ -743,6 +805,82 @@ export function MailSidebar({
             </div>
           </div>
 
+          {/* Segmented Horizontal Multi-Account Tabs Bar */}
+          {accounts.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-0.5 px-0.5">
+              <button
+                type="button"
+                onClick={() => onAccountChange("all")}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 flex items-center gap-1.5 transition-all cursor-pointer border",
+                  selectedAccountId === "all"
+                    ? "bg-sky-500/15 text-sky-400 border-sky-500/40 shadow-xs font-semibold"
+                    : "bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary/70 border-transparent"
+                )}
+                title="Unified Inbox: view all connected accounts"
+              >
+                <Layers className="h-3 w-3 text-sky-400" />
+                <span>Unified</span>
+                {unreadCount > 0 && (
+                  <span
+                    className={cn(
+                      "text-[10px] px-1.5 py-0 rounded-full font-bold",
+                      selectedAccountId === "all" ? "bg-sky-500 text-white" : "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {accounts.map((acc) => {
+                const isAccActive = selectedAccountId === acc.id;
+                const unreads = accountUnreadCounts[acc.id] || 0;
+                const shortLabel = acc.displayName?.split(" ")[0] || acc.emailAddress.split("@")[0];
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => onAccountChange(acc.id)}
+                    className={cn(
+                      "px-2 py-1 rounded-lg text-xs font-medium shrink-0 flex items-center gap-1.5 transition-all cursor-pointer border max-w-[140px] truncate",
+                      isAccActive
+                        ? "bg-secondary text-foreground shadow-xs font-semibold"
+                        : "bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/60 border-transparent"
+                    )}
+                    style={{
+                      borderColor: isAccActive ? `${acc.colorCode || "#38bdf8"}60` : undefined,
+                    }}
+                    title={`${acc.displayName || acc.emailAddress} (${acc.provider})`}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full shrink-0"
+                      style={{ backgroundColor: acc.colorCode || "#38bdf8" }}
+                    />
+                    <span className="truncate">{shortLabel}</span>
+                    {unreads > 0 && (
+                      <span
+                        className="text-[10px] px-1.5 py-0 rounded-full font-bold text-white shrink-0"
+                        style={{ backgroundColor: acc.colorCode || "#38bdf8" }}
+                      >
+                        {unreads}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={onOpenConnectModal}
+                className="h-6 w-6 rounded-lg border border-dashed border-border/80 hover:border-sky-400 text-muted-foreground hover:text-sky-400 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                title="Connect another email inbox"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
           {/* Search Box */}
           <div className="relative w-full">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -772,6 +910,60 @@ export function MailSidebar({
               </span>
             </div>
           </div>
+
+          {/* AI Inbox Health & One-Click Cleanup Strip */}
+          {aiHealthStats && (
+            <div className="bg-gradient-to-r from-card/90 via-emerald-950/20 to-sky-950/20 border border-border/70 rounded-lg p-2 text-xs flex flex-col gap-1.5 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-4 w-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                    <Sparkles className="h-2.5 w-2.5" />
+                  </div>
+                  <span className="font-semibold text-foreground text-[11px]">
+                    Inbox Health: <strong className="text-emerald-400">{aiHealthStats.score}%</strong>
+                  </span>
+                  <span className="text-[10px] text-muted-foreground truncate">
+                    ({aiHealthStats.promoCount} promos, {aiHealthStats.noReplyCount} no-reply)
+                  </span>
+                </div>
+                {onOpenCleanup && (
+                  <button
+                    type="button"
+                    onClick={onOpenCleanup}
+                    className="text-[10px] text-sky-400 hover:text-sky-300 font-semibold hover:underline flex items-center gap-0.5 cursor-pointer shrink-0"
+                  >
+                    <span>Full Audit</span>
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
+              {cleanNotice && (
+                <div className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                  ✨ {cleanNotice}
+                </div>
+              )}
+
+              {aiHealthStats.promoCount > 0 && !cleanNotice && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleBatchCleanQuick("promotional", "archive")}
+                    disabled={batchCleaning}
+                    className="flex-1 py-1 px-2 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-[10px] font-medium flex items-center justify-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+                    title="Automatically archive all promotional emails in this inbox"
+                  >
+                    {batchCleaning ? (
+                      <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <Archive className="h-2.5 w-2.5" />
+                    )}
+                    <span>Clean {aiHealthStats.promoCount} Promos</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </SidebarHeader>
 
         {/* Email count, AI Clean-up, and deep sync status header */}
@@ -865,6 +1057,54 @@ export function MailSidebar({
                           <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-sky-500" />
                         )}
 
+                        {/* Quick Action Floating Bar on Hover */}
+                        <div className="absolute right-2 top-2 hidden group-hover:flex items-center gap-0.5 bg-card/95 backdrop-blur-md border border-border/80 rounded-lg shadow-md p-0.5 z-10 transition-all animate-in fade-in">
+                          {onArchiveThread && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onArchiveThread(thread.id);
+                              }}
+                              className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer"
+                              title="Archive (E)"
+                            >
+                              <Archive className="h-3 w-3" />
+                            </button>
+                          )}
+                          {onDeleteThread && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteThread(thread.id);
+                              }}
+                              className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
+                              title="Delete (#)"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
+                          {onStarToggleThread && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onStarToggleThread(thread.id, thread.isStarred);
+                              }}
+                              className={cn(
+                                "h-6 w-6 rounded flex items-center justify-center cursor-pointer transition-colors",
+                                thread.isStarred
+                                  ? "text-amber-400 hover:bg-amber-500/10"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                              )}
+                              title={thread.isStarred ? "Unstar (S)" : "Star (S)"}
+                            >
+                              <Star className="h-3 w-3" fill={thread.isStarred ? "currentColor" : "none"} />
+                            </button>
+                          )}
+                        </div>
+
                         {/* Top row: Sender, account dot, date */}
                         <div className="flex items-center justify-between w-full gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -884,18 +1124,23 @@ export function MailSidebar({
                               {latestMessage?.senderName || latestMessage?.senderEmail || "Unknown Sender"}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0 group-hover:opacity-0 transition-opacity">
                             {selectedAccountId === "all" && thread.account && (
                               <span
-                                className="text-[9px] px-1.5 py-0.2 rounded-full border font-medium truncate max-w-[80px]"
+                                className="text-[9px] px-1.5 py-0.2 rounded-md border font-medium truncate max-w-[100px] flex items-center gap-1"
                                 style={{
                                   borderColor: `${thread.account.colorCode || '#38bdf8'}40`,
                                   backgroundColor: `${thread.account.colorCode || '#38bdf8'}15`,
                                   color: thread.account.colorCode || '#38bdf8',
                                 }}
-                                title={`Received on ${thread.account.emailAddress}`}
+                                title={`Received on ${thread.account.emailAddress} (${thread.account.provider})`}
                               >
-                                {thread.account.displayName || thread.account.emailAddress.split("@")[0]}
+                                <span className="text-[8px] font-bold">
+                                  {thread.account.provider === "GMAIL" ? "G" : thread.account.provider === "OUTLOOK" ? "O" : "M"}
+                                </span>
+                                <span className="truncate">
+                                  {thread.account.displayName?.split(" ")[0] || thread.account.emailAddress.split("@")[0]}
+                                </span>
                               </span>
                             )}
                             <span className="text-[10px] text-muted-foreground whitespace-nowrap">
@@ -1062,8 +1307,17 @@ function formatShortDate(dateStr: string) {
   if (!dateStr) return "";
   const d = new Date(dateStr);
   const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins >= 0 && diffMins < 1) return "Just now";
+  if (diffMins >= 1 && diffMins < 60) return `${diffMins}m ago`;
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return "Yesterday";
   }
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }

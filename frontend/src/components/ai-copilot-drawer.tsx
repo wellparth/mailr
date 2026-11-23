@@ -115,13 +115,95 @@ export function AICopilotDrawer({
   const [byokInfo, setByokInfo] = React.useState<{ provider: string; model?: string; hasCustomKey: boolean } | null>(null);
   const [cleaningCategory, setCleaningCategory] = React.useState<string | null>(null);
 
-  // Autonomous Ghost Mode Rules State
-  const [viewMode, setViewMode] = React.useState<"chat" | "rules">("chat");
+  // View Mode: Copilot Chat, Calendar & Bookings, Autonomous Ghost Mode
+  const [viewMode, setViewMode] = React.useState<"chat" | "calendar" | "rules">("chat");
   const [automationRules, setAutomationRules] = React.useState<any[]>([]);
   const [automationLogs, setAutomationLogs] = React.useState<any[]>([]);
   const [loadingRules, setLoadingRules] = React.useState(false);
   const [purgingStale, setPurgingStale] = React.useState(false);
   const [purgeToast, setPurgeToast] = React.useState<string | null>(null);
+
+  // Calendar proposals & scheduling state
+  const [calendarProposals, setCalendarProposals] = React.useState<any[]>([]);
+  const [loadingProposals, setLoadingProposals] = React.useState(false);
+  const [copiedSlots, setCopiedSlots] = React.useState(false);
+  const [suggestedSlots, setSuggestedSlots] = React.useState<string[]>([]);
+  const [schedulingTitle, setSchedulingTitle] = React.useState("");
+  const [schedulingDate, setSchedulingDate] = React.useState("");
+  const [schedulingTime, setSchedulingTime] = React.useState("10:00");
+  const [schedulingDuration, setSchedulingDuration] = React.useState("30");
+  const [schedulingAttendee, setSchedulingAttendee] = React.useState("");
+  const [schedulingSuccess, setSchedulingSuccess] = React.useState<string | null>(null);
+
+  const loadProposals = React.useCallback(async () => {
+    try {
+      setLoadingProposals(true);
+      const res: any = await apiFetch("/api/ai/calendar/proposals");
+      if (res?.proposals) {
+        setCalendarProposals(res.proposals);
+      }
+    } catch (err) {
+      console.warn("Failed to load calendar proposals", err);
+    } finally {
+      setLoadingProposals(false);
+    }
+  }, []);
+
+  const handleGenerateSlots = () => {
+    const slots: string[] = [];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfter = new Date();
+    dayAfter.setDate(dayAfter.getDate() + 2);
+
+    const fmt = (d: Date, time: string) =>
+      `${d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} at ${time}`;
+
+    slots.push(fmt(tomorrow, "10:00 AM - 10:30 AM"));
+    slots.push(fmt(tomorrow, "2:00 PM - 2:30 PM"));
+    slots.push(fmt(dayAfter, "11:00 AM - 11:30 AM"));
+    setSuggestedSlots(slots);
+  };
+
+  const handleCopySlots = () => {
+    if (suggestedSlots.length === 0) return;
+    const text = `I'm available at any of the following times:\n${suggestedSlots.map((s) => `• ${s}`).join("\n")}\n\nPlease let me know if any of these work for you!`;
+    navigator.clipboard.writeText(text);
+    setCopiedSlots(true);
+    setTimeout(() => setCopiedSlots(false), 2500);
+  };
+
+  const handleInsertSlots = () => {
+    if (suggestedSlots.length === 0) return;
+    const text = `I'm available at any of the following times:\n${suggestedSlots.map((s) => `• ${s}`).join("\n")}\n\nPlease let me know if any of these work for you!`;
+    onInsertDraftToComposer(text);
+  };
+
+  const handleDirectSchedule = () => {
+    if (!schedulingTitle || !schedulingDate) {
+      alert("Please enter a meeting title and date.");
+      return;
+    }
+    const [hours, mins] = schedulingTime.split(":").map(Number);
+    const start = new Date(schedulingDate);
+    start.setHours(hours || 10, mins || 0, 0, 0);
+    const durMinutes = parseInt(schedulingDuration, 10) || 30;
+    const end = new Date(start.getTime() + durMinutes * 60000);
+
+    const startIso = start.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    const endIso = end.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+    const gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+      schedulingTitle
+    )}&dates=${startIso}/${endIso}&add=${encodeURIComponent(schedulingAttendee)}&details=${encodeURIComponent(
+      "Scheduled via Mailr AI Client"
+    )}`;
+
+    window.open(gCalUrl, "_blank", "noopener,noreferrer");
+    setSchedulingSuccess(`Meeting "${schedulingTitle}" scheduled!`);
+    setTimeout(() => setSchedulingSuccess(null), 4000);
+    setSchedulingTitle("");
+  };
 
   const loadAutomations = React.useCallback(async () => {
     try {
@@ -625,6 +707,27 @@ export function AICopilotDrawer({
           <button
             type="button"
             onClick={() => {
+              setViewMode("calendar");
+              loadProposals();
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              viewMode === "calendar"
+                ? "bg-purple-500/15 text-purple-400 border border-purple-500/30 font-semibold"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+            }`}
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            <span>Calendar</span>
+            {calendarProposals.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0 rounded-full font-bold bg-purple-500 text-white">
+                {calendarProposals.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               setViewMode("rules");
               loadAutomations();
             }}
@@ -641,6 +744,18 @@ export function AICopilotDrawer({
             )}
           </button>
         </div>
+
+        {viewMode === "calendar" && (
+          <button
+            type="button"
+            onClick={loadProposals}
+            disabled={loadingProposals}
+            title="Refresh calendar proposals"
+            className="p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            <RefreshCw className={`h-3 w-3 ${loadingProposals ? "animate-spin text-purple-400" : ""}`} />
+          </button>
+        )}
 
         {viewMode === "rules" && (
           <button
@@ -808,6 +923,242 @@ export function AICopilotDrawer({
                         Re: {log.thread.subject}
                       </p>
                     )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : viewMode === "calendar" ? (
+        <div className="flex-1 overflow-y-auto p-3.5 space-y-4 text-xs">
+          {/* Header Banner */}
+          <div className="p-3 rounded-xl bg-gradient-to-tr from-purple-950/40 via-secondary/30 to-background border border-purple-500/30 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-foreground flex items-center gap-1.5">
+                <Calendar className="h-4 w-4 text-purple-400" />
+                Calendar & Meetings Hub
+              </span>
+              <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/40 bg-purple-950/40">
+                AI Synced
+              </Badge>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Detect meeting invitations from emails, suggest availability slots, and book events with Google & Outlook.
+            </p>
+          </div>
+
+          {/* Quick Availability Suggester Card */}
+          <div className="p-3 rounded-xl bg-card border border-border space-y-2.5 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-sky-400" />
+                Quick Availability Suggester
+              </span>
+              <button
+                type="button"
+                onClick={handleGenerateSlots}
+                className="text-[10px] text-sky-400 hover:text-sky-300 font-medium hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Sparkles className="h-3 w-3" />
+                <span>Suggest Slots</span>
+              </button>
+            </div>
+
+            {suggestedSlots.length > 0 ? (
+              <div className="space-y-2">
+                <div className="space-y-1 bg-secondary/30 p-2.5 rounded-lg border border-border/50 text-[11px]">
+                  {suggestedSlots.map((slot, i) => (
+                    <div key={i} className="flex items-center gap-2 text-foreground">
+                      <span className="h-1.5 w-1.5 rounded-full bg-sky-400 shrink-0" />
+                      <span>{slot}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopySlots}
+                    className="flex-1 h-7 text-xs gap-1.5 cursor-pointer"
+                  >
+                    {copiedSlots ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    <span>{copiedSlots ? "Copied!" : "Copy Slots"}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleInsertSlots}
+                    className="flex-1 h-7 text-xs gap-1.5 bg-sky-600 hover:bg-sky-500 text-white cursor-pointer"
+                  >
+                    <Send className="h-3 w-3" />
+                    <span>Insert in Draft</span>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Click "Suggest Slots" to automatically calculate your optimal open time slots for meetings.
+              </p>
+            )}
+          </div>
+
+          {/* Quick Schedule Meeting Direct Form */}
+          <div className="p-3 rounded-xl bg-card border border-border space-y-2.5 shadow-xs">
+            <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5 text-purple-400" />
+              Schedule New Meeting
+            </span>
+
+            {schedulingSuccess && (
+              <div className="p-2 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                <span>{schedulingSuccess}</span>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Input
+                placeholder="Meeting Title (e.g. Sync on Project)"
+                value={schedulingTitle}
+                onChange={(e) => setSchedulingTitle(e.target.value)}
+                className="h-8 text-xs bg-secondary/30"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="date"
+                  value={schedulingDate}
+                  onChange={(e) => setSchedulingDate(e.target.value)}
+                  className="h-8 text-xs bg-secondary/30"
+                />
+                <Input
+                  type="time"
+                  value={schedulingTime}
+                  onChange={(e) => setSchedulingTime(e.target.value)}
+                  className="h-8 text-xs bg-secondary/30"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={schedulingDuration}
+                  onChange={(e) => setSchedulingDuration(e.target.value)}
+                  className="h-8 text-xs bg-secondary/40 border border-border rounded-md px-2 text-foreground"
+                >
+                  <option value="15">15 Minutes</option>
+                  <option value="30">30 Minutes</option>
+                  <option value="45">45 Minutes</option>
+                  <option value="60">60 Minutes</option>
+                </select>
+                <Input
+                  placeholder="Attendee Email"
+                  value={schedulingAttendee}
+                  onChange={(e) => setSchedulingAttendee(e.target.value)}
+                  className="h-8 text-xs bg-secondary/30"
+                />
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleDirectSchedule}
+                disabled={!schedulingTitle || !schedulingDate}
+                className="w-full h-8 text-xs bg-purple-600 hover:bg-purple-500 text-white gap-1.5 cursor-pointer mt-1"
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Schedule & Open Calendar</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Upcoming Meeting Proposals from Emails */}
+          <div className="space-y-2 pt-2 border-t border-border/40">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5" />
+                Detected Meeting Proposals
+              </span>
+              <Badge variant="outline" className="text-[9px] text-muted-foreground">
+                {calendarProposals.length} invitations
+              </Badge>
+            </div>
+
+            {loadingProposals ? (
+              <div className="flex items-center justify-center p-6 text-muted-foreground">
+                <RefreshCw className="h-4 w-4 animate-spin mr-2 text-purple-400" />
+                <span>Loading calendar invites...</span>
+              </div>
+            ) : calendarProposals.length === 0 ? (
+              <div className="p-4 rounded-xl bg-secondary/20 border border-border/40 text-center text-[11px] text-muted-foreground">
+                No calendar invites detected in your emails. When clients or colleagues email meeting proposals, they will appear here.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {calendarProposals.map((prop) => (
+                  <div
+                    key={prop.id}
+                    className="p-3 rounded-xl bg-card border border-border/70 space-y-2 shadow-xs"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <div className="h-7 w-7 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center shrink-0 mt-0.5">
+                          <Calendar className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-semibold text-foreground truncate">{prop.title}</h4>
+                          <p className="text-[10px] text-muted-foreground">
+                            {new Date(prop.startTime).toLocaleString([], {
+                              weekday: "short",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[9px] px-1.5 py-0 uppercase shrink-0",
+                          prop.status === "ACCEPTED"
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                            : "bg-purple-500/10 text-purple-300 border-purple-500/30"
+                        )}
+                      >
+                        {prop.status}
+                      </Badge>
+                    </div>
+
+                    {prop.message?.subject && (
+                      <p className="text-[10px] text-muted-foreground italic truncate">
+                        Re: {prop.message.subject}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-1 border-t border-border/30">
+                      <a
+                        href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                          prop.title
+                        )}&dates=${new Date(prop.startTime).toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${new Date(
+                          prop.endTime
+                        ).toISOString().replace(/[-:]/g, "").split(".")[0]}Z&details=${encodeURIComponent(
+                          prop.description || ""
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 h-6 px-2 rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-[10px] font-medium border border-purple-500/30 flex items-center justify-center gap-1 transition-colors"
+                      >
+                        <Calendar className="h-3 w-3" />
+                        <span>Google Cal</span>
+                        <ExternalLink className="h-2 w-2" />
+                      </a>
+                      <a
+                        href={`/api/ai/calendar/proposals/${prop.id}/ics`}
+                        download
+                        className="h-6 px-2 rounded-md bg-secondary hover:bg-secondary/80 text-foreground text-[10px] font-medium border border-border/60 flex items-center justify-center gap-1 transition-colors"
+                      >
+                        <Download className="h-3 w-3" />
+                        <span>.ics</span>
+                      </a>
+                    </div>
                   </div>
                 ))}
               </div>

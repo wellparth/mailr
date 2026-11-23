@@ -1609,6 +1609,44 @@ export function MailDisplay({
             </div>
           </div>
 
+          {/* Quick AI Response Intent Chips */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {[
+              "Accept meeting & confirm time",
+              "Polite decline",
+              "Request more details",
+              "Acknowledge & received",
+            ].map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                disabled={generatingTone !== null}
+                onClick={async () => {
+                  if (!latestMessage) return;
+                  try {
+                    setGeneratingTone("professional");
+                    const res = await apiFetch<any>("/api/ai/draft-reply", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        subject: thread.subject,
+                        bodyText: `${latestMessage.bodyText || latestMessage.snippet || ""}\n\n[User Intent: ${chip}]`,
+                        tone: "professional",
+                      }),
+                    });
+                    if (res?.draft) setReplyText(res.draft);
+                  } catch (e) {
+                    console.error("Draft generation failed", e);
+                  } finally {
+                    setGeneratingTone(null);
+                  }
+                }}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-secondary/60 hover:bg-secondary text-muted-foreground hover:text-foreground border border-border/50 transition-colors cursor-pointer"
+              >
+                ⚡ {chip}
+              </button>
+            ))}
+          </div>
+
           <div className="relative rounded-xl border border-border bg-card/40 p-1 focus-within:border-ring transition-colors">
             <textarea
               rows={4}
@@ -1638,6 +1676,42 @@ export function MailDisplay({
         </div>
           </>
         )}
+      </div>
+
+      {/* Superhuman Keyboard Shortcuts Footer Strip */}
+      <div className="px-6 py-2 border-t border-border/40 bg-card/10 flex items-center justify-between text-[11px] text-muted-foreground shrink-0 select-none">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">E</kbd>
+            <span>Archive</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">#</kbd>
+            <span>Trash</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">S</kbd>
+            <span>Star</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">R</kbd>
+            <span>Reply</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">F</kbd>
+            <span>Forward</span>
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <kbd className="px-1 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">C</kbd>
+            <span>Compose</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.2 rounded bg-secondary border border-border text-[10px] font-mono">⌘K</kbd>
+            <span>Palette</span>
+          </span>
+        </div>
       </div>
 
       {/* Lightbox Image Preview Modal */}
