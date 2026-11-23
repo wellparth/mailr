@@ -289,6 +289,13 @@ export class LLMClient {
     // Strip out internal reasoning tags if present so draft responses & notes remain clean
     text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+    if (text.startsWith("Here's a thinking process:") || text.startsWith("Here is a thinking process:")) {
+      const parts = text.split(/\n\s*\n/);
+      const draftPart = parts.find((p: string) => p.includes("Subject:") || p.includes("Dear ") || p.includes("Hi ") || p.includes("Hello ") || p.includes("I'm available"));
+      if (draftPart) {
+        text = text.substring(text.indexOf(draftPart)).trim();
+      }
+    }
 
     return {
       text,
@@ -339,15 +346,12 @@ export class LLMClient {
     // 1. NVIDIA NIM Models
     if (provider === 'nvidia') {
       const fallbackNvidiaModels: AIModelOption[] = [
-        { id: 'nvidia/nemotron-3.5-bolt-e4b', name: 'NVIDIA Nemotron 3.5 Bolt (Fast & Free)', provider: 'nvidia', description: 'Optimized reasoning & fast email drafting', isRecommended: true },
-        { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'nvidia', description: 'Meta flagship 70B high-reasoning model', isRecommended: true },
-        { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1 Reasoning', provider: 'nvidia', description: 'DeepSeek frontier chain-of-thought model', isRecommended: true },
-        { id: 'deepseek-ai/deepseek-v4.1-flash', name: 'DeepSeek v4.1 Flash', provider: 'nvidia', description: 'High-speed reasoning model' },
-        { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B Instruct', provider: 'nvidia', description: 'Massive open frontier model (405B parameters)' },
-        { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B Instruct', provider: 'nvidia', description: 'High capability general assistant' },
-        { id: 'meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B Instruct', provider: 'nvidia', description: 'Ultra-fast low-latency model' },
-        { id: 'mistralai/mistral-large-2-instruct', name: 'Mistral Large 2', provider: 'nvidia', description: 'Mistral flagship reasoning model' },
-        { id: 'qwen/qwen2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', provider: 'nvidia', description: 'Specialized code & structured syntax model' },
+        { id: 'nvidia/nemotron-3.5-bolt-e4b', name: 'NVIDIA Nemotron 3.5 Bolt (Fastest Replier)', provider: 'nvidia', description: 'Ultra-fast sub-second executive email drafting & agentic tool calls', isRecommended: true },
+        { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', name: 'NVIDIA Nemotron 3 Nano Omni 30B', provider: 'nvidia', description: 'Advanced 30B reasoning & structured analysis model', isRecommended: true },
+        { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', name: 'NVIDIA Nemotron 3.5 Lightning 30B', provider: 'nvidia', description: 'High-speed 30B reasoning model' },
+        { id: 'nvidia/nemotron-3-ultra-550b-a55b', name: 'NVIDIA Nemotron 3 Ultra 550B', provider: 'nvidia', description: 'Massive open frontier 550B parameter model' },
+        { id: 'minimaxai/minimax-m3.1-flash', name: 'MiniMax M3.1 Flash', provider: 'nvidia', description: 'High-throughput flash model' },
+        { id: 'mistralai/mistral-large-4-1t-a52b', name: 'Mistral Large 4 (1T Params)', provider: 'nvidia', description: 'Flagship 1T parameter MoE architecture' },
       ];
 
       if (!apiKey) return fallbackNvidiaModels;

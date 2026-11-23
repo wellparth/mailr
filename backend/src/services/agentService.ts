@@ -1143,11 +1143,11 @@ Return ONLY the drafted response body ready to send.`;
   }
 
   /**
-   * Tool: Scan and distinguish promotional, spam, newsletter, and notification emails.
+   * Tool: Scan and distinguish real humans, OTP security codes, promotional, spam, newsletter, and avoided no-reply emails.
    */
   static async toolDetectAndClassifyEmails(
     userId: string,
-    args: { category?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary'; limit?: number }
+    args: { category?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary' | 'real_human' | 'otp'; limit?: number }
   ) {
     const { AIService } = await import('./aiService.js');
     return AIService.detectAndClassifyInbox(userId, {
@@ -1903,7 +1903,7 @@ Return ONLY the drafted response body ready to send.`;
           '2. get_thread_messages: Read the complete conversation of an email thread. Args: {"threadId": string}',
           '3. compose_email_draft: Compose an email draft or dispatch email. Args: {"to": string, "subject": string, "body": string, "threadId"?: string, "sendImmediately"?: boolean}',
           '4. triage_emails: Archive, star, unstar, mark read, mark unread, or snooze emails. Args: {"action": "archive"|"mark_read"|"mark_unread"|"star"|"unstar"|"snooze", "threadIds": string[]}',
-          '5. detect_and_classify_emails: Distinguish and categorize promotional, spam, newsletter, and notification emails. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary", "limit"?: number}',
+          '5. detect_and_classify_emails: Distinguish and categorize emails into real human correspondence, OTP/2FA security codes, promotional campaigns, avoided no-reply bots, spam, and newsletters. Args: {"category"?: "all"|"promotional"|"spam"|"newsletter"|"notification"|"unnecessary"|"real_human"|"otp", "limit"?: number}',
           '6. batch_clean_unnecessary_emails: Batch archive or trash detected promotional, spam, or newsletter emails. Args: {"categories": string[], "action": "archive"|"trash"}',
           '7. unsubscribe_email_or_newsletter: Real automated unsubscription! Extracts one-click unsubscribe URL, executes HTTP unsubscription request, and archives/trashes matching emails. Args: {"senderEmail"?: string, "threadId"?: string, "query"?: string, "action"?: "archive"|"trash"}',
           '8. get_inbox_cleanup_suggestions: Audit mailbox health score, dead senders, and newsletter bloat. Args: {"accountId"?: string}',
@@ -1926,6 +1926,11 @@ Return ONLY the drafted response body ready to send.`;
           '21. check_notification_channels: Check which mobile/chat notification channels are configured and active. Args: {}',
           '',
           'CRITICAL AGENT RULES:',
+          '- EMAIL CLASSIFICATION & ATTENTION RULES:',
+          '  1. REAL PERSON EMAILS: Direct correspondence from real human beings that actually needs attention or reply (inquiries, questions, proposals, contracts, attachments, follow-ups). Mark as high priority, keep in primary inbox, and surface for user attention.',
+          '  2. PROMOTIONAL EMAILS: Marketing campaigns, discounts, coupons, sales announcements, flash deals. Mark as promotional and group for cleanup/archival.',
+          '  3. NO-REPLY / BOT EMAILS: Automated no-reply notifications (system alerts, routine github/jira pings, status reports) must be AVOIDED/SUPPRESSED from user attention and urgent morning briefings UNLESS it is an OTP/2FA or login verification code.',
+          '  4. OTP & 2FA VERIFICATION CODES: When an email (even from a no-reply address!) contains an OTP, login code, or 2FA passcode, treat it as CRITICAL/URGENT priority! Extract and surface the code immediately.',
           '- Automated unsubscription IS supported and works via `unsubscribe_email_or_newsletter`. Never claim that you cannot unsubscribe! Call `unsubscribe_email_or_newsletter` whenever the user asks to unsubscribe, stop receiving, or remove promotional or newsletter emails.',
           '- Mobile & chat notifications ARE supported via `send_mobile_notification`. You can ping the user on their phone, Slack, Discord, Telegram, or WhatsApp at any time.',
           '- You have up to 6 reasoning rounds. Take multiple steps if necessary: search -> inspect -> unsubscribe -> clean -> notify.',
@@ -2141,6 +2146,13 @@ Return ONLY the drafted response body ready to send.`;
         lower.includes('junk') ||
         lower.includes('newsletter') ||
         lower.includes('distinguish') ||
+        lower.includes('real person') ||
+        lower.includes('human') ||
+        lower.includes('needs attention') ||
+        lower.includes('no reply') ||
+        lower.includes('noreply') ||
+        lower.includes('otp') ||
+        lower.includes('verification code') ||
         lower.includes('clean my inbox') ||
         lower.includes('clean inbox') ||
         lower.includes('clean up');
@@ -2287,27 +2299,32 @@ Return ONLY the drafted response body ready to send.`;
         actionType = 'CONTACTS_FOUND';
         actionPayload = { contacts: contactsRes };
       }
-      // 0d. PROMOTIONAL / SPAM / UNNECESSARY EMAIL CLASSIFICATION & TRIAGE
+      // 0d. PROMOTIONAL / SPAM / REAL HUMAN / OTP CLASSIFICATION & TRIAGE
       else if (isClassificationQuery) {
-        let catFilter: any = 'unnecessary';
+        let catFilter: any = 'all';
         if (lower.includes('promo') || lower.includes('promotional')) catFilter = 'promotional';
         else if (lower.includes('spam')) catFilter = 'spam';
         else if (lower.includes('newsletter')) catFilter = 'newsletter';
+        else if (lower.includes('real person') || lower.includes('human')) catFilter = 'real_human';
+        else if (lower.includes('otp') || lower.includes('verification code')) catFilter = 'otp';
 
         const classification = await this.toolDetectAndClassifyEmails(userId, { category: catFilter, limit: 50 });
         toolSteps.push({
           tool: 'detect_and_classify_emails',
-          summary: `Scanned ${classification.totalScanned} email(s): detected ${classification.breakdown.promotional} promotional, ${classification.breakdown.spam} spam, ${classification.breakdown.newsletter} newsletter(s)`,
+          summary: `Scanned ${classification.totalScanned} email(s): detected ${classification.breakdown.realHuman || 0} real human, ${classification.breakdown.otpSecurity || 0} OTP(s), ${classification.breakdown.promotional} promotional, and ${classification.breakdown.automatedNoReply || 0} avoided no-reply`,
           status: 'completed',
         });
 
-        reply = `I scanned your inboxes to distinguish and filter unnecessary emails:\n\n` +
-          `• 🏷️ **Promotional**: ${classification.breakdown.promotional} email(s) (marketing deals, discounts)\n` +
-          `• 🚨 **Spam / Suspicious**: ${classification.breakdown.spam} email(s)\n` +
-          `• 📰 **Newsletters & Digests**: ${classification.breakdown.newsletter} email(s)\n` +
-          `• 🔔 **System Notifications**: ${classification.breakdown.notification} email(s)\n` +
-          `• 📬 **Primary Human Correspondence**: ${classification.breakdown.primary} email(s)\n\n` +
-          `You can review each categorized email below or use 1-click actions to clean your inbox!`;
+        reply = `I audited your mailbox to distinguish real humans, OTP security codes, promotions, and avoided no-reply emails:\n\n` +
+          `• 👤 **Real Person Correspondence**: **${classification.breakdown.realHuman || 0} email(s)** (Requires direct attention / reply)\n` +
+          `• 🔑 **One-Time Passcodes (OTP / 2FA)**: **${classification.breakdown.otpSecurity || 0} code(s)** (Critical priority, surfaced for 1-click copy)\n` +
+          `• 🏷️ **Promotional Campaigns**: **${classification.breakdown.promotional || 0} email(s)** (Marketing deals, grouped for cleanup)\n` +
+          `• 🤖 **Avoided No-Reply Bots**: **${classification.breakdown.automatedNoReply || 0} email(s)** (Routine notifications, suppressed unless OTP)\n` +
+          `• 📰 **Newsletters**: **${classification.breakdown.newsletter || 0} email(s)**\n\n` +
+          (classification.breakdown.otpSecurity && classification.breakdown.otpSecurity > 0
+            ? `⚡ **Active OTP Detected**: Your latest login/security code has been extracted to the top banner for immediate copying!\n\n`
+            : '') +
+          `Would you like me to archive the promotional emails or batch clean the avoided no-reply clutter?`;
         actionType = 'EMAILS_CLASSIFIED';
         actionPayload = { classifiedEmails: classification };
       }

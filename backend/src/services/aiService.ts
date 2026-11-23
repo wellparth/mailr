@@ -17,7 +17,9 @@ export interface ParsedTriageAction {
 }
 
 export type EmailCategory =
+  | 'REAL_HUMAN'
   | 'ACTION_REQUIRED'
+  | 'OTP_SECURITY'
   | 'USEFUL_TRANSACTIONAL'
   | 'AUTOMATED_NO_REPLY'
   | 'NEWSLETTER'
@@ -34,7 +36,33 @@ export interface PriorityAssessment {
   requiresReply: boolean;
   isNoReply: boolean;
   hasUsefulContent: boolean;
+  isRealHuman?: boolean;
+  isOtp?: boolean;
+  otpCode?: string;
   usefulType?: 'VERIFICATION_2FA' | 'RECEIPT_BILLING' | 'TRAVEL_BOOKING' | 'SECURITY_ALERT';
+}
+
+/**
+ * Robust extraction of One-Time Passcodes (OTP), 2FA verification codes, and security PINs.
+ */
+export function extractOtpCode(text: string): string | null {
+  if (!text) return null;
+  const patterns = [
+    /(?:verification code|security code|login code|authorization code|one-time password|otp|confirm code|passcode|secret code)[\s:=is]+([0-9]{4,8}|[A-Z0-9]{6}|[0-9]{3}-[0-9]{3})/i,
+    /(?:use code|enter code|your code is|the code is|code is)[\s:=]+([0-9]{4,8}|[A-Z0-9]{6}|[0-9]{3}-[0-9]{3})/i,
+    /\b(G-[0-9]{6})\b/i,
+    /\b([0-9]{3}-[0-9]{3})\b/,
+    /\b([0-9]{6})\b/,
+    /\b([0-9]{4})\b/,
+  ];
+
+  for (const regex of patterns) {
+    const match = text.match(regex);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+  return null;
 }
 
 export interface CleanupSuggestion {
@@ -58,7 +86,9 @@ export interface InboxHealthReport {
   totalInboxThreads: number;
   unnecessaryCount: number;
   breakdown: {
+    realHuman?: number;
     actionRequired: number;
+    otpSecurity?: number;
     usefulTransactional: number;
     automatedNoReply: number;
     newsletters: number;
@@ -82,6 +112,9 @@ export interface EmailClassification {
   recommendedAction: 'ARCHIVE' | 'TRASH' | 'UNSUBSCRIBE' | 'KEEP';
   isUnnecessary: boolean;
   receivedAt: string;
+  isRealPerson?: boolean;
+  isOtp?: boolean;
+  otpCode?: string;
 }
 
 export class AIService {
@@ -295,19 +328,41 @@ export class AIService {
       text.includes('this is an automated message') ||
       text.includes('this email was sent from a notification-only address');
 
-    // 2. Detect if content contains genuinely useful transactional/security info
-    const hasVerificationCode =
-      /\b\d{4,8}\b/.test(text) &&
-      (text.includes('verification code') ||
-        text.includes('security code') ||
-        text.includes('one-time password') ||
-        text.includes('otp') ||
-        text.includes('confirm your email') ||
-        text.includes('login code') ||
-        text.includes('password reset') ||
-        text.includes('temporary password') ||
-        text.includes('authorization code'));
+    // 2. Detect OTP / 2FA / Login Verification Security Codes (CRITICAL PRIORITY: Never avoid OTPs!)
+    const isOtpContext =
+      text.includes('verification code') ||
+      text.includes('security code') ||
+      text.includes('one-time password') ||
+      text.includes('one-time passcode') ||
+      text.includes('otp') ||
+      text.includes('2fa') ||
+      text.includes('login code') ||
+      text.includes('confirm your email') ||
+      text.includes('authorization code') ||
+      text.includes('temporary password') ||
+      text.includes('password reset code') ||
+      text.includes('use the code below') ||
+      text.includes('here is your code');
 
+    const extractedOtp = isOtpContext ? extractOtpCode(text) : null;
+    if (isOtpContext && (extractedOtp || text.includes('code'))) {
+      return {
+        score: 98,
+        level: PriorityLevel.URGENT,
+        reason: extractedOtp
+          ? `One-Time Login/Security Code: ${extractedOtp} (Expires soon)`
+          : 'Contains One-Time Login Verification Security Code',
+        category: 'OTP_SECURITY',
+        requiresReply: false,
+        isNoReply: true,
+        hasUsefulContent: true,
+        isOtp: true,
+        otpCode: extractedOtp || undefined,
+        usefulType: 'VERIFICATION_2FA',
+      };
+    }
+
+    // 3. Other Transactional Alerts (receipts, bookings, security alerts)
     const isCriticalSecurityAlert =
       text.includes('security alert') ||
       text.includes('new sign-in') ||
@@ -341,41 +396,51 @@ export class AIService {
       text.includes('e-ticket') ||
       text.includes('check-in is open');
 
-    const hasUsefulContent = hasVerificationCode || isCriticalSecurityAlert || isReceiptOrBilling || isTravelOrBooking;
-    let usefulType: PriorityAssessment['usefulType'] = undefined;
-    if (hasVerificationCode) usefulType = 'VERIFICATION_2FA';
-    else if (isCriticalSecurityAlert) usefulType = 'SECURITY_ALERT';
-    else if (isReceiptOrBilling) usefulType = 'RECEIPT_BILLING';
-    else if (isTravelOrBooking) usefulType = 'TRAVEL_BOOKING';
-
-    // 3. Evaluate No-Reply Senders with Useful vs Unuseful Filter
+    // 4. Evaluate No-Reply Senders (Avoided UNLESS it is an OTP, which was caught above)
     if (isNoReply) {
-      if (hasUsefulContent) {
-        let reason = 'Useful automated notice (no response needed).';
-        if (hasVerificationCode) reason = 'Contains 2FA / verification security code.';
-        else if (isReceiptOrBilling) reason = 'Payment receipt / order confirmation.';
-        else if (isTravelOrBooking) reason = 'Travel booking / itinerary confirmation.';
-        else if (isCriticalSecurityAlert) reason = 'Critical security / account alert.';
-
-        const score = isCriticalSecurityAlert || hasVerificationCode ? 85 : 75;
+      if (isCriticalSecurityAlert) {
         return {
-          score,
-          level: score >= 80 ? PriorityLevel.HIGH : PriorityLevel.NORMAL,
-          reason,
+          score: 85,
+          level: PriorityLevel.HIGH,
+          reason: 'Critical security / new sign-in notice (no reply needed).',
           category: 'USEFUL_TRANSACTIONAL',
           requiresReply: false,
           isNoReply: true,
           hasUsefulContent: true,
-          usefulType,
+          usefulType: 'SECURITY_ALERT',
+        };
+      }
+      if (isReceiptOrBilling) {
+        return {
+          score: 35,
+          level: PriorityLevel.LOW,
+          reason: 'Automated receipt / billing record • No reply needed.',
+          category: 'USEFUL_TRANSACTIONAL',
+          requiresReply: false,
+          isNoReply: true,
+          hasUsefulContent: true,
+          usefulType: 'RECEIPT_BILLING',
+        };
+      }
+      if (isTravelOrBooking) {
+        return {
+          score: 55,
+          level: PriorityLevel.NORMAL,
+          reason: 'Travel reservation / booking details • No reply needed.',
+          category: 'USEFUL_TRANSACTIONAL',
+          requiresReply: false,
+          isNoReply: true,
+          hasUsefulContent: true,
+          usefulType: 'TRAVEL_BOOKING',
         };
       }
 
       // Check if it's promotional or newsletter from a no-reply address
       if (text.includes('% off') || text.includes('discount') || text.includes('sale') || text.includes('deal')) {
         return {
-          score: 20,
+          score: 15,
           level: PriorityLevel.LOW,
-          reason: 'Automated promotional marketing blast.',
+          reason: 'Automated promotional marketing blast • Avoided.',
           category: 'PROMOTIONAL',
           requiresReply: false,
           isNoReply: true,
@@ -385,9 +450,9 @@ export class AIService {
 
       if (isNewsletter || Boolean(unsubscribeUrl) || text.includes('unsubscribe') || text.includes('digest')) {
         return {
-          score: 25,
+          score: 20,
           level: PriorityLevel.LOW,
-          reason: 'Automated newsletter / publication digest.',
+          reason: 'Automated newsletter / publication digest • Avoided.',
           category: 'NEWSLETTER',
           requiresReply: false,
           isNoReply: true,
@@ -395,11 +460,11 @@ export class AIService {
         };
       }
 
-      // Routine unuseful no-reply notice
+      // Standard Routine No-Reply Notice (Avoided completely as requested)
       return {
-        score: 20,
+        score: 10,
         level: PriorityLevel.LOW,
-        reason: 'Automated no-reply notification • No action or reply needed.',
+        reason: 'Automated no-reply mail • Avoided (No attention needed, no OTP).',
         category: 'AUTOMATED_NO_REPLY',
         requiresReply: false,
         isNoReply: true,
@@ -407,7 +472,7 @@ export class AIService {
       };
     }
 
-    // 4. Check for Spam / Phishing
+    // 5. Check for Spam / Phishing
     const spamKeywords = [
       'crypto wallet', 'wire transfer', 'lottery winner', 'inheritance fund',
       'verify your wallet', 'western union', 'bitcoin deposit', 'eth transfer',
@@ -426,11 +491,12 @@ export class AIService {
       };
     }
 
-    // 5. Check for Promotional Emails
+    // 6. Check for Promotional Emails
     const promoKeywords = [
       '% off', 'percent off', 'discount code', 'coupon code', 'promo code',
       'flash sale', 'clearance', 'black friday', 'limited time offer',
       'special offer', 'save up to', 'exclusive pricing', 'shop now and save',
+      'cyber monday', 'exclusive deal', 'free shipping', 'upgrade now for $',
     ];
     const isPromoSender =
       sender.includes('promo') ||
@@ -441,9 +507,9 @@ export class AIService {
       sender.includes('sales@');
     if (promoKeywords.some((kw) => text.includes(kw)) || isPromoSender) {
       return {
-        score: 20,
+        score: 15,
         level: PriorityLevel.LOW,
-        reason: 'Promotional campaign or sales advertisement.',
+        reason: 'Promotional campaign or sales advertisement • Grouped for cleanup.',
         category: 'PROMOTIONAL',
         requiresReply: false,
         isNoReply: false,
@@ -451,7 +517,7 @@ export class AIService {
       };
     }
 
-    // 6. Check for Newsletters
+    // 7. Check for Newsletters
     if (
       isNewsletter ||
       Boolean(unsubscribeUrl) ||
@@ -463,7 +529,7 @@ export class AIService {
       text.includes('you received this email because you subscribed')
     ) {
       return {
-        score: 25,
+        score: 20,
         level: PriorityLevel.LOW,
         reason: 'Curated publication or periodic newsletter.',
         category: 'NEWSLETTER',
@@ -473,7 +539,7 @@ export class AIService {
       };
     }
 
-    // 7. Check for Direct Human Correspondence Requiring Action / Reply
+    // 8. Check for REAL HUMAN CORRESPONDENCE (Real Person Requiring Attention)
     const isUrgent =
       text.includes('urgent') ||
       text.includes('asap') ||
@@ -481,9 +547,10 @@ export class AIService {
       text.includes('action required') ||
       text.includes('immediate attention') ||
       text.includes('emergency') ||
-      text.includes('deadline today');
+      text.includes('deadline today') ||
+      text.includes('need this by');
 
-    const asksQuestionOrAction =
+    const humanActionRequested =
       text.includes('?') ||
       text.includes('please let me know') ||
       text.includes('can you') ||
@@ -495,31 +562,36 @@ export class AIService {
       text.includes('meeting request') ||
       text.includes('proposal') ||
       text.includes('contract') ||
-      text.includes('review attached');
+      text.includes('review attached') ||
+      text.includes('attached') ||
+      text.includes('follow up') ||
+      text.includes('let me know');
 
-    if (asksQuestionOrAction || isUrgent) {
+    if (humanActionRequested || isUrgent) {
       const score = isUrgent ? 95 : 85;
       return {
         score,
         level: isUrgent ? PriorityLevel.URGENT : PriorityLevel.HIGH,
         reason: isUrgent
-          ? 'Urgent direct inquiry with immediate action required.'
-          : 'Direct correspondence requesting your review or reply.',
+          ? 'Urgent inquiry from real person requiring immediate attention.'
+          : 'Direct correspondence from real person requesting action or reply.',
         category: 'ACTION_REQUIRED',
         requiresReply: true,
         isNoReply: false,
+        isRealHuman: true,
         hasUsefulContent: true,
       };
     }
 
-    // 8. Standard Primary FYI Correspondence
+    // 9. Standard Real Human FYI Correspondence
     return {
-      score: 50,
+      score: 75,
       level: PriorityLevel.NORMAL,
-      reason: 'Direct human correspondence (for your information).',
-      category: 'PRIMARY',
+      reason: 'Direct human correspondence from real person.',
+      category: 'REAL_HUMAN',
       requiresReply: false,
       isNoReply: false,
+      isRealHuman: true,
       hasUsefulContent: true,
     };
   }
@@ -544,7 +616,48 @@ export class AIService {
     const subject = (message.subject || '').toLowerCase();
     const signals: string[] = [];
 
-    // 1. SPAM / PHISHING / MALICIOUS DETECTION
+    // 1. CRITICAL: OTP / 2FA / Login Verification Security Passcode (NEVER AVOID OTPS!)
+    const isOtpContext =
+      text.includes('verification code') ||
+      text.includes('security code') ||
+      text.includes('one-time password') ||
+      text.includes('one-time passcode') ||
+      text.includes('otp') ||
+      text.includes('2fa') ||
+      text.includes('login code') ||
+      text.includes('confirm your email') ||
+      text.includes('authorization code') ||
+      text.includes('temporary password') ||
+      text.includes('password reset code') ||
+      text.includes('use the code below') ||
+      text.includes('here is your code');
+
+    const extractedOtp = isOtpContext ? extractOtpCode(text) : null;
+    if (isOtpContext && (extractedOtp || text.includes('code'))) {
+      signals.push(
+        extractedOtp
+          ? `One-Time Security Passcode (OTP) extracted: ${extractedOtp}`
+          : 'One-Time Login/Security verification code detected (urgent / time-sensitive)'
+      );
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'OTP_SECURITY',
+        confidence: 99,
+        signals,
+        recommendedAction: 'KEEP',
+        isUnnecessary: false,
+        isOtp: true,
+        otpCode: extractedOtp || undefined,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 2. SPAM / PHISHING / MALICIOUS DETECTION
     const spamKeywords = [
       'crypto wallet', 'wire transfer', 'lottery winner', 'inheritance fund',
       'verify your wallet', 'western union', 'bitcoin deposit', 'eth transfer',
@@ -571,7 +684,7 @@ export class AIService {
       };
     }
 
-    // 2. PROMOTIONAL / SALES DEALS / MARKETING CAMPAIGNS
+    // 3. PROMOTIONAL / SALES DEALS / MARKETING CAMPAIGNS
     const promoKeywords = [
       '% off', 'percent off', 'discount', 'coupon code', 'promo code',
       'voucher code', 'flash sale', 'sale ends', 'clearance', 'black friday',
@@ -614,7 +727,7 @@ export class AIService {
       };
     }
 
-    // 3. NEWSLETTER / DIGEST
+    // 4. NEWSLETTER / DIGEST
     const isNewsletterSender =
       message.isNewsletter ||
       Boolean(message.unsubscribeUrl) ||
@@ -656,7 +769,7 @@ export class AIService {
       };
     }
 
-    // 4. AUTOMATED NOTIFICATION / TRANSACTIONAL ALERTS
+    // 5. AUTOMATED NO-REPLY / BOT SENDERS (AVOIDED - Routine alerts without OTP)
     const isNotificationSender =
       sender.includes('noreply') ||
       sender.includes('no-reply') ||
@@ -669,17 +782,17 @@ export class AIService {
       sender.includes('zendesk');
 
     const notificationPhrases = [
-      'password changed', 'login notification', 'security code',
-      'build completed', 'pull request', 'automated notification',
-      'do not reply to this email', 'receipt for your payment',
+      'do not reply to this email',
+      'this is an automated message',
+      'sent from a notification-only address',
+      'build completed',
+      'automated notification',
+      'password changed',
     ];
     const detectedNotification = notificationPhrases.filter((kw) => text.includes(kw));
 
     if (isNotificationSender || detectedNotification.length > 0) {
-      signals.push(`Automated bot/system sender: <${sender}>`);
-      if (detectedNotification.length > 0) {
-        signals.push(`Transactional notice: "${detectedNotification.slice(0, 2).join('", "')}"`);
-      }
+      signals.push(`Automated bot/system sender: <${sender}> • Avoided (No attention needed, no OTP)`);
       return {
         threadId: message.threadId,
         messageId: message.id,
@@ -687,8 +800,8 @@ export class AIService {
         senderName: message.senderName || undefined,
         subject: message.subject,
         snippet: message.snippet || '',
-        category: 'NOTIFICATION',
-        confidence: 82,
+        category: 'AUTOMATED_NO_REPLY',
+        confidence: 90,
         signals,
         recommendedAction: 'ARCHIVE',
         isUnnecessary: true,
@@ -696,7 +809,54 @@ export class AIService {
       };
     }
 
-    // 5. PRIMARY CORRESPONDENCE (High importance / personal / business)
+    // 6. REAL PERSON CORRESPONDENCE (High importance / personal / direct business inquiries)
+    const isUrgent =
+      text.includes('urgent') ||
+      text.includes('asap') ||
+      text.includes('critical') ||
+      text.includes('action required') ||
+      text.includes('immediate attention') ||
+      text.includes('emergency') ||
+      text.includes('deadline today') ||
+      text.includes('need this by');
+
+    const humanActionRequested =
+      text.includes('?') ||
+      text.includes('please let me know') ||
+      text.includes('can you') ||
+      text.includes('could you') ||
+      text.includes('waiting on your') ||
+      text.includes('feedback on') ||
+      text.includes('what do you think') ||
+      text.includes('are you free') ||
+      text.includes('meeting request') ||
+      text.includes('proposal') ||
+      text.includes('contract') ||
+      text.includes('review attached') ||
+      text.includes('attached') ||
+      text.includes('follow up') ||
+      text.includes('let me know');
+
+    if (humanActionRequested || isUrgent) {
+      signals.push(isUrgent ? 'Urgent direct inquiry from real person' : 'Direct request or question from real person');
+      return {
+        threadId: message.threadId,
+        messageId: message.id,
+        senderEmail: message.senderEmail,
+        senderName: message.senderName || undefined,
+        subject: message.subject,
+        snippet: message.snippet || '',
+        category: 'ACTION_REQUIRED',
+        confidence: 95,
+        signals,
+        recommendedAction: 'KEEP',
+        isUnnecessary: false,
+        isRealPerson: true,
+        receivedAt: new Date(message.receivedAt).toISOString(),
+      };
+    }
+
+    // 7. STANDARD REAL HUMAN PRIMARY CORRESPONDENCE
     return {
       threadId: message.threadId,
       messageId: message.id,
@@ -704,11 +864,12 @@ export class AIService {
       senderName: message.senderName || undefined,
       subject: message.subject,
       snippet: message.snippet || '',
-      category: 'PRIMARY',
+      category: 'REAL_HUMAN',
       confidence: 90,
-      signals: ['Direct human correspondence, client inquiry, or work request'],
+      signals: ['Direct correspondence from real person (FYI / reading)'],
       recommendedAction: 'KEEP',
       isUnnecessary: false,
+      isRealPerson: true,
       receivedAt: new Date(message.receivedAt).toISOString(),
     };
   }
@@ -719,7 +880,7 @@ export class AIService {
   static async detectAndClassifyInbox(
     userId: string,
     options: {
-      categoryFilter?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary';
+      categoryFilter?: 'all' | 'promotional' | 'spam' | 'newsletter' | 'notification' | 'unnecessary' | 'real_human' | 'otp';
       limit?: number;
       folder?: string;
     } = {}
@@ -762,25 +923,31 @@ export class AIService {
     const promotional = classified.filter((c) => c.category === 'PROMOTIONAL');
     const spam = classified.filter((c) => c.category === 'SPAM');
     const newsletter = classified.filter((c) => c.category === 'NEWSLETTER');
-    const notification = classified.filter((c) => c.category === 'NOTIFICATION');
-    const primary = classified.filter((c) => c.category === 'PRIMARY');
+    const automatedNoReply = classified.filter((c) => c.category === 'AUTOMATED_NO_REPLY' || c.category === 'NOTIFICATION');
+    const otpSecurity = classified.filter((c) => c.category === 'OTP_SECURITY');
+    const realHuman = classified.filter((c) => c.category === 'REAL_HUMAN' || c.category === 'ACTION_REQUIRED');
+    const primary = classified.filter((c) => c.category === 'PRIMARY' || c.category === 'REAL_HUMAN');
     const unnecessary = classified.filter((c) => c.isUnnecessary);
 
     let filtered = classified;
     if (options.categoryFilter === 'promotional') filtered = promotional;
     else if (options.categoryFilter === 'spam') filtered = spam;
     else if (options.categoryFilter === 'newsletter') filtered = newsletter;
-    else if (options.categoryFilter === 'notification') filtered = notification;
+    else if (options.categoryFilter === 'notification') filtered = automatedNoReply;
+    else if (options.categoryFilter === 'otp') filtered = otpSecurity;
+    else if (options.categoryFilter === 'real_human') filtered = realHuman;
     else if (options.categoryFilter === 'unnecessary') filtered = unnecessary;
 
     const result = {
       totalScanned: messages.length,
       unnecessaryCount: unnecessary.length,
       breakdown: {
+        realHuman: realHuman.length,
+        otpSecurity: otpSecurity.length,
         promotional: promotional.length,
         spam: spam.length,
         newsletter: newsletter.length,
-        notification: notification.length,
+        automatedNoReply: automatedNoReply.length,
         primary: primary.length,
       },
       filteredCount: filtered.length,
@@ -1000,7 +1167,9 @@ export class AIService {
     });
 
     // 2. Breakdown counts
+    let realHumanCount = 0;
     let actionRequiredCount = 0;
+    let otpSecurityCount = 0;
     let usefulTransactionalCount = 0;
     let automatedNoReplyCount = 0;
     let newslettersCount = 0;
@@ -1028,8 +1197,15 @@ export class AIService {
       const sender = latest?.senderEmail || '';
 
       switch (cat) {
+        case 'OTP_SECURITY':
+          otpSecurityCount++;
+          break;
+        case 'REAL_HUMAN':
+          realHumanCount++;
+          break;
         case 'ACTION_REQUIRED':
           actionRequiredCount++;
+          realHumanCount++;
           actionRequiredThreadIds.push(t.id);
           break;
         case 'USEFUL_TRANSACTIONAL':
@@ -1152,7 +1328,9 @@ export class AIService {
       totalInboxThreads: threads.length,
       unnecessaryCount: unnecessaryTotal,
       breakdown: {
+        realHuman: realHumanCount,
         actionRequired: actionRequiredCount,
+        otpSecurity: otpSecurityCount,
         usefulTransactional: usefulTransactionalCount,
         automatedNoReply: automatedNoReplyCount,
         newsletters: newslettersCount,

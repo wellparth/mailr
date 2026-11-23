@@ -270,15 +270,19 @@ export function MailSidebar({
     let promoCount = 0;
     let noReplyCount = 0;
     let actionCount = 0;
+    let realHumanCount = 0;
+    let otpCount = 0;
     threads.forEach((t) => {
       if (t.aiCategory === "PROMOTIONAL") promoCount++;
       if (t.aiCategory === "AUTOMATED_NO_REPLY") noReplyCount++;
       if (t.aiCategory === "ACTION_REQUIRED") actionCount++;
+      if (t.aiCategory === "REAL_HUMAN") realHumanCount++;
+      if (t.aiCategory === "OTP_SECURITY") otpCount++;
     });
     const total = threads.length;
     if (total === 0) return null;
     const score = Math.max(45, Math.min(100, Math.round(100 - (promoCount * 2 + noReplyCount * 1.5))));
-    return { promoCount, noReplyCount, actionCount, score };
+    return { promoCount, noReplyCount, actionCount, realHumanCount, otpCount, score };
   }, [threads]);
 
   const [batchCleaning, setBatchCleaning] = React.useState(false);
@@ -923,7 +927,7 @@ export function MailSidebar({
                     Inbox Health: <strong className="text-emerald-400">{aiHealthStats.score}%</strong>
                   </span>
                   <span className="text-[10px] text-muted-foreground truncate">
-                    ({aiHealthStats.promoCount} promos, {aiHealthStats.noReplyCount} no-reply)
+                    ({aiHealthStats.realHumanCount > 0 ? `${aiHealthStats.realHumanCount} real, ` : ""}{aiHealthStats.promoCount} promos, {aiHealthStats.noReplyCount} no-reply{aiHealthStats.otpCount > 0 ? `, 🔑 ${aiHealthStats.otpCount} OTP` : ""})
                   </span>
                 </div>
                 {onOpenCleanup && (
@@ -1167,6 +1171,22 @@ export function MailSidebar({
                           )}
 
                           {/* AI Category Badges */}
+                          {thread.aiCategory === "OTP_SECURITY" && (
+                            <span
+                              className="text-[9px] px-1.5 py-0 h-4 rounded border border-yellow-500/60 text-yellow-300 bg-yellow-500/20 font-bold shrink-0 flex items-center gap-0.5 animate-pulse"
+                              title={thread.priorityReason || "One-Time Security Passcode (OTP) • Urgent"}
+                            >
+                              🔑 OTP
+                            </span>
+                          )}
+                          {thread.aiCategory === "REAL_HUMAN" && (
+                            <span
+                              className="text-[9px] px-1.5 py-0 h-4 rounded border border-emerald-500/40 text-emerald-300 bg-emerald-500/15 font-medium shrink-0 flex items-center gap-0.5"
+                              title="Direct correspondence from real person"
+                            >
+                              👤 Real Person
+                            </span>
+                          )}
                           {thread.aiCategory === "USEFUL_TRANSACTIONAL" && (
                             <span
                               className="text-[9px] px-1 py-0 h-4 rounded border border-emerald-500/40 text-emerald-400 bg-emerald-500/10 font-medium shrink-0 flex items-center gap-0.5"
@@ -1177,8 +1197,8 @@ export function MailSidebar({
                           )}
                           {thread.aiCategory === "AUTOMATED_NO_REPLY" && (
                             <span
-                              className="text-[9px] px-1 py-0 h-4 rounded border border-slate-500/40 text-slate-400 bg-slate-500/10 font-medium shrink-0 flex items-center gap-0.5"
-                              title={thread.priorityReason || "Automated no-reply notification • No reply needed"}
+                              className="text-[9px] px-1 py-0 h-4 rounded border border-slate-600/40 text-slate-400 bg-slate-800/40 font-medium shrink-0 flex items-center gap-0.5 opacity-80"
+                              title={thread.priorityReason || "Automated no-reply notification • Avoided (No attention needed, no OTP)"}
                             >
                               🤖 No Reply
                             </span>
@@ -1186,7 +1206,7 @@ export function MailSidebar({
                           {thread.aiCategory === "ACTION_REQUIRED" && (
                             <span
                               className="text-[9px] px-1 py-0 h-4 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10 font-medium shrink-0 flex items-center gap-0.5"
-                              title={thread.priorityReason || "Direct correspondence requesting action or reply"}
+                              title={thread.priorityReason || "Direct correspondence from real person requesting action or reply"}
                             >
                               ⚡ Reply Needed
                             </span>

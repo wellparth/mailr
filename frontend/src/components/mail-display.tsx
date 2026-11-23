@@ -39,6 +39,9 @@ import {
   BellOff,
   Receipt,
   Zap,
+  Key,
+  UserCheck,
+  Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +50,28 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { apiFetch, getAuthToken } from "@/lib/api";
 import { SandboxedEmailBody } from "@/components/sandboxed-email-body";
 import DOMPurify from "dompurify";
+
+/**
+ * Extract OTP / 2FA verification codes from email text.
+ */
+function extractOtpCode(text: string): string | null {
+  if (!text) return null;
+  const patterns = [
+    /(?:verification code|security code|login code|authorization code|one-time password|otp|confirm code|passcode|secret code)[\s:=is]+([0-9]{4,8}|[A-Z0-9]{6}|[0-9]{3}-[0-9]{3})/i,
+    /(?:use code|enter code|your code is|the code is|code is)[\s:=]+([0-9]{4,8}|[A-Z0-9]{6}|[0-9]{3}-[0-9]{3})/i,
+    /\b(G-[0-9]{6})\b/i,
+    /\b([0-9]{3}-[0-9]{3})\b/,
+    /\b([0-9]{6})\b/,
+    /\b([0-9]{4})\b/,
+  ];
+  for (const regex of patterns) {
+    const match = text.match(regex);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+  return null;
+}
 
 // Helper to sanitize incoming email HTML securely against Stored XSS
 function sanitizeEmailHtml(dirtyHtml: string): string {
@@ -208,6 +233,21 @@ export function MailDisplay({
   const proposals = latestMessage?.calendarProposals || [];
   const attachments = latestMessage?.attachments || [];
   const [downloadingAttId, setDownloadingAttId] = React.useState<string | null>(null);
+
+  // Robust extraction of OTP / 2FA login verification code from thread content
+  const detectedOtp = React.useMemo(() => {
+    if (!thread) return null;
+    const allText = `${thread.subject || ""} ${thread.priorityReason || ""} ${(thread.messages || []).map((m) => `${m.snippet || ""} ${m.bodyText || ""}`).join(" ")}`;
+    return extractOtpCode(allText);
+  }, [thread]);
+
+  const [copiedOtp, setCopiedOtp] = React.useState(false);
+
+  const handleCopyOtp = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedOtp(true);
+    setTimeout(() => setCopiedOtp(false), 2500);
+  };
 
   // Tracking expanded messages for long thread conversation histories
   const [expandedMessageIds, setExpandedMessageIds] = React.useState<Set<string>>(new Set());
@@ -1112,7 +1152,140 @@ export function MailDisplay({
         ) : (
           <>
             {/* AI Priority & Category Intelligence Banner */}
-            {thread.aiCategory === "AUTOMATED_NO_REPLY" ? (
+            {thread.aiCategory === "OTP_SECURITY" || detectedOtp ? (
+              <div className="bg-gradient-to-r from-amber-950/60 via-card to-yellow-950/40 border-2 border-yellow-500/50 rounded-xl p-3.5 shadow-md flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="p-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 shrink-0 animate-pulse">
+                    <Key className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-yellow-300 uppercase tracking-wider">
+                        One-Time Passcode (OTP)
+                      </span>
+                      <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/40 text-[10px] py-0 px-1.5 uppercase font-semibold">
+                        Urgent Security Code
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                      Time-sensitive verification code for authentication or password reset.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  {detectedOtp && (
+                    <div className="flex items-center gap-2 bg-black/60 border border-yellow-500/40 px-3 py-1 rounded-lg">
+                      <span className="font-mono text-lg font-bold tracking-widest text-yellow-300 select-all">
+                        {detectedOtp}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleCopyOtp(detectedOtp)}
+                        className="h-6 px-2 text-xs text-yellow-300 hover:text-white hover:bg-yellow-500/30 font-semibold gap-1 cursor-pointer"
+                        title="Copy OTP code to clipboard"
+                      >
+                        {copiedOtp ? (
+                          <>
+                            <Check className="h-3 w-3 text-emerald-400" />
+                            <span className="text-emerald-400 text-[11px]">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3" />
+                            <span className="text-[11px]">Copy</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onArchive(thread.id)}
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                    title="Archive this email after using the code"
+                  >
+                    <Archive className="h-3 w-3 mr-1" />
+                    Archive
+                  </Button>
+                </div>
+              </div>
+            ) : thread.aiCategory === "REAL_HUMAN" ? (
+              <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3.5 flex items-start justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 mt-0.5 shrink-0">
+                    <UserCheck className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                        Real Person Correspondence
+                      </span>
+                      <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-emerald-950/60 text-emerald-300 border-emerald-600/40">
+                        Human Sender
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-emerald-200/90 mt-1 leading-relaxed">
+                      {thread.priorityReason || "Direct correspondence from a real human being. Requires attention or reply."}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => handleGenerateReply("professional")}
+                  className="h-7 text-xs bg-emerald-500 text-black hover:bg-emerald-400 font-semibold shrink-0 cursor-pointer"
+                >
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  Draft AI Reply
+                </Button>
+              </div>
+            ) : thread.aiCategory === "PROMOTIONAL" ? (
+              <div className="bg-purple-950/30 border border-purple-500/30 rounded-xl p-3.5 flex items-start justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-purple-400 mt-0.5 shrink-0">
+                    <Tag className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">
+                        Promotional Offer
+                      </span>
+                      <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-950/60 text-purple-300 border-purple-600/40">
+                        Marketing / Discount
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-purple-200/90 mt-1 leading-relaxed">
+                      {thread.priorityReason || "Promotional sales campaign, coupon offer, or store discount blast."}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 self-center">
+                  {thread.messages[0]?.unsubscribeUrl && !unsubscribed && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleUnsubscribe}
+                      disabled={unsubscribing}
+                      className="h-7 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border-rose-500/30 gap-1.5 cursor-pointer"
+                    >
+                      <BellOff className="h-3 w-3" />
+                      <span>{unsubscribing ? "Unsubscribing..." : "Unsubscribe"}</span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onArchive(thread.id)}
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    <Archive className="h-3 w-3 mr-1" />
+                    Archive
+                  </Button>
+                </div>
+              </div>
+            ) : thread.aiCategory === "AUTOMATED_NO_REPLY" ? (
               <div className="bg-slate-950/40 border border-slate-500/30 rounded-xl p-3.5 flex items-start justify-between gap-3 shadow-xs">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-500/25 text-slate-400 mt-0.5 shrink-0">
@@ -1121,14 +1294,14 @@ export function MailDisplay({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-semibold text-slate-300">
-                        Automated No-Reply
+                        Automated No-Reply (Avoided)
                       </span>
                       <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-900 text-slate-400 border-slate-700">
-                        No Response Needed
+                        Suppressed • No OTP
                       </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      {thread.priorityReason || "This email was generated by an automated notification bot or system. No reply is expected."}
+                      {thread.priorityReason || "Automated no-reply notification • Avoided from urgent attention (No OTP detected)."}
                     </p>
                   </div>
                 </div>
